@@ -96,13 +96,30 @@ fn find_clusters(boxes: Vec<Point>) -> Cluster {
     return group;
 }
 
+// warning area is not square
+// TODO : fix so that area _is_ a square
 fn area_clusters (cluster : Cluster) -> Vec<u16> {
     let mut areas = Vec::new();
 
+
     for c in cluster{
+        // improper hack to fix into square
+        if c.1.0 != c.1.1 {
+            if c.1.0 < c.1.1 {
+                areas.push(c.0 * c.1.1 * c.1.1);
+            }
+            else {
+                areas.push(c.0 * c.1.0 * c.1.0);
+            }
+        }
+        else {
+            areas.push(c.0 * c.1.0 * c.1.1);
+        }
         // calc area of clusters
-        areas.push(c.0 * c.1.0 * c.1.1);
+
+
     }
+
 
     return areas;
 }
@@ -416,26 +433,26 @@ fn packer(boxes : Vec<Point>) -> (ClusterRects, (usize, usize)) {
         (bb_test.row(0).len(), bb_test.column(0).len()));
 }
 
-// TODO add Ok() result
-pub fn read_font(data: String, font_size: f64)
-    -> Result<(), Box<dyn std::error::Error>> {
+// todo add ok() result
+pub fn read_font(data: string, font_size: f64)
+    -> result<(), box<dyn std::error::error>> {
 
     // read font from file and load data into abstraction
     let font_data = std::fs::read(data)?;
-    let face = ttf::Face::from_slice(&font_data, 0)?;
+    let face = ttf::face::from_slice(&font_data, 0)?;
 
     // calculate scale of the font
     let units_per_em = face.units_per_em();
     let scale = font_size / units_per_em as f64;
 
-    let mut glyphs = Vec::new();
-    let mut bboxes = Vec::new();
+    let mut glyphs = vec::new();
+    let mut bboxes = vec::new();
     for id in 0..face.number_of_glyphs() {
-        let glyph = face.glyph_raster_image(ttf::GlyphId(id), std::u16::MAX);
+        let glyph = face.glyph_raster_image(ttf::glyphid(id), std::u16::max);
         // get glpyh and bbox
         glyphs.push(glyph.unwrap());
         bboxes.push(bb_to_rect(
-                face.glyph_bounding_box(ttf::GlyphId(id)).unwrap()));
+                face.glyph_bounding_box(ttf::glyphid(id)).unwrap()));
     }
 
     let packed_points = packer(bboxes);
@@ -449,8 +466,9 @@ use ttf::RasterGlyphImage;
 // this is the part of the algorithm that modifies
 // the papers algorithm for glyph clusters
 fn bbox_positioner(cluster_size: (u16, u16), n_clusters: u16,
-                    cluster_position: (u16, u16), total_size: u16) {
-    todo!();
+                    cluster_position: (u16, u16), total_size: u16) -> Vec<Point> {
+
+
 }
 
 
@@ -458,7 +476,11 @@ fn write_packing(glpyh_rasters : Vec<RasterGlyphImage>, clusters: ClusterRects,
                  size: PackedSize, scale: f64)
     -> Result<(), Box<dyn std::error::Error>> {
 
-    clsuters.into_iter().map(|cluster| bbox_positioner.)
+    // find the bboxes of single glpyhs
+    let bboxes : Vec<Vec<Point>> = clusters.into_iter().map(
+        |cluster|
+        bbox_positioner(cluster.0.1, cluster.0.0, cluster.1.1, cluster.1.0)
+    ).collect();
 
     return Ok(());
 
