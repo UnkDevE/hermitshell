@@ -7,11 +7,19 @@ edition = "2021"
 [dependencies]
 portable-pty = "0.7.0"
 
+# gpu deps
 winit = {version = "0.26"}
 env_logger = "0.9"
 log = "0.4"
 pollster = "0.2.5"
 wgpu = "0.12"
-ttf-parser = "0.15.2"
 
-nalgebra = "0.31.1"
+# font deps
+fontdue = "0.7.2"
+
+# wgpu internal feature for image loading
+[dependencies.image]
+version = "0.24"
+default-features = false
+features = ["png", "jpeg"]
+
