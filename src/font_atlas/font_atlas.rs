@@ -1,23 +1,8 @@
 mod packer;
 
-pub fn raster_texture(pixels : Vec<u8>) -> () {
-    let glpyh_img = image::load_from_memory(pixels.as_slice()).unwrap();
-
-    // using from wgpu tutorial code
-    use image::GenericImageView;
-    let dim = glpyh_img.dimensions();
-    let text_size = wgpu::Extent3d {
-        width: dim.0,
-        height: dim.1,
-        depth_or_array_layers: 1
-    };
-
-
-}
-
 // creates the font texture atlas given a vector of rasterized glpyhs
 // and positions of where those glpyhs are
-fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>) -> () {
+fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>, size: Point) -> () {
 
     // gpu boilerplate
     let instance = wgpu::Instance::new(wgpu::Backends::all());
@@ -35,8 +20,12 @@ fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>) -> () {
         .await
         .unwrap();
 
-    let atlas = wgpu::TextureDescriptor {
+    // create texture atlas var
+    let atlas_desc = wgpu::TextureDescriptor {
         size: wgpu::Extent3d{
+            width: size.0,
+            height: size.1,
+            depth_or_array_layers: 1,
 
         },
         mip_level_count: 1,
@@ -51,8 +40,31 @@ fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>) -> () {
     };
 
 
-    device.create_texture();
-    todo!();
+    let atlas = device.create_texture();
+
+    for (glpyh, bbox) in glyphs_with_bbox {
+        let glpyh_img = image::load_from_memory(pixels.as_slice()).unwrap();
+        
+
+        queue.write_texture(
+            // Tells wgpu where to copy the pixel data
+            wgpu::ImageCopyTexture {
+                texture: &diffuse_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            // The actual pixel data
+            &diffuse_rgba,
+            // The layout of the texture
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
+                rows_per_image: std::num::NonZeroU32::new(dimensions.1),
+            },
+            texture_size,
+        );
+    }
 
 
 }
@@ -63,7 +75,8 @@ pub fn read_font(data: String, font_size: f32)
 
     // read font from file and load data into abstraction
     let font_data = std::fs::read(data).unwrap();
-    let face = fontdue::Font::from_bytes(font_data.as_slice(), fontdue::FontSettings::default()).unwrap();
+    let face = fontdue::Font::from_bytes(font_data.as_slice(), 
+                                     fontdue::FontSettings::default()).unwrap();
 
     // calculate scale of the font
     let units_per_em = face.units_per_em();
@@ -102,5 +115,5 @@ pub fn read_font(data: String, font_size: f32)
             height: metrics.height as i16});
     }
 
-    let pos_boxes = packer(bboxes);
+    let (pos_boxes, sizes) = packer(bboxes);
 }
