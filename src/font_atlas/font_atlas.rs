@@ -1,8 +1,10 @@
-mod packer;
+use crate::font_atlas::packer::packer;
+use crate::font_atlas::packer::Point;
+use crate::font_atlas::packer::BBox;
 
 // creates the font texture atlas given a vector of rasterized glpyhs
 // and positions of where those glpyhs are
-fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>, size: Point) -> () {
+async fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>, size: Point) -> wgpu::Texture {
 
     // gpu boilerplate
     let instance = wgpu::Instance::new(wgpu::Backends::all());
@@ -12,6 +14,7 @@ fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>, size: Point) -> () {
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             compatible_surface: None,
+            force_fallback_adapter: false
         })
         .await
         .unwrap();
@@ -23,8 +26,8 @@ fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>, size: Point) -> () {
     // create texture atlas var
     let atlas_desc = wgpu::TextureDescriptor {
         size: wgpu::Extent3d{
-            width: size.0,
-            height: size.1,
+            width: size.0 as u32,
+            height: size.1 as u32,
             depth_or_array_layers: 1,
 
         },
@@ -39,34 +42,36 @@ fn font_atlas(glyphs_with_bbox: Vec<(Vec<u8>, BBox)>, size: Point) -> () {
 
     };
 
+    let atlas = device.create_texture(&atlas_desc);
 
-    let atlas = device.create_texture();
-
-    for (glpyh, bbox) in glyphs_with_bbox {
-        let glpyh_img = image::load_from_memory(pixels.as_slice()).unwrap();
-        
-
+    for (pixels, bbox) in glyphs_with_bbox {
         queue.write_texture(
             // Tells wgpu where to copy the pixel data
             wgpu::ImageCopyTexture {
-                texture: &diffuse_texture,
+                texture: &atlas,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             // The actual pixel data
-            &diffuse_rgba,
+            &pixels,
+
             // The layout of the texture
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
-                rows_per_image: std::num::NonZeroU32::new(dimensions.1),
+                bytes_per_row: std::num::NonZeroU32::new(4 * bbox.width as u32),
+                rows_per_image: None, 
             },
-            texture_size,
+
+            wgpu::Extent3d{
+                width: bbox.width as u32,
+                height: bbox.height as u32,
+                depth_or_array_layers: 1 
+            }
         );
     }
 
-
+    return atlas;
 }
 
 pub fn read_font(data: String, font_size: f32)

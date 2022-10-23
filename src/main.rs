@@ -18,6 +18,7 @@ struct State {
 }
 
 mod font_atlas;
+
 impl State {
     async fn new(window: &Window) -> Self {
         let size = window.inner_size();

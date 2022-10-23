@@ -11,13 +11,13 @@
  *
  */
 
-type Point = (i16, i16);
+pub type Point = (i16, i16);
 
 #[derive(Clone)]
 pub struct BBox {
-    glpyh: char,
-    width: i16,
-    height: i16,
+    pub glpyh: char,
+    pub width: i16,
+    pub height: i16,
 }
 
 impl PartialEq for BBox {
