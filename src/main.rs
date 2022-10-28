@@ -144,6 +144,7 @@ fn read_from_pty(reader: &mut Box<dyn Read + Send>) -> String {
 
 
 pub async fn run(){
+    // wasm not supported in this project yet 
     #[cfg(target_arch = "wasm32")]{
         panic!("WASM not supported");
     }
