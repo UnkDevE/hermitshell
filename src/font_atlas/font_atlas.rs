@@ -5,17 +5,17 @@ use crate::font_atlas::packer::BBox;
 use std::collections::HashMap;
 
 pub struct FontAtlas {
-    atlas : wgpu::Texture,
-    // point = (i16, i16)
+    atlas : wgpu::Buffer,
+    // point = (i16, i16) => ((w, h), (x, y))
     lookup : HashMap<char, (Point, Point)> 
 }
 
 impl FontAtlas {
     
     // creates the font texture atlas given a vector of rasterized glpyhs
-    // and positions of where those glpyhs are
+    // and positions of where those glpyhs are using a wpu::Buffer
     async fn font_atlas(&self, glyphs_with_bbox: Vec<((BBox, Point), Vec<u8>)>,
-            size: Point) -> wgpu::Texture {
+            size: Point) -> wgpu::Buffer {
 
             // gpu boilerplate
             let instance = wgpu::Instance::new(wgpu::Backends::all());
@@ -34,59 +34,31 @@ impl FontAtlas {
                 .await
                 .unwrap();
 
-            // create texture atlas var
-            let atlas_desc = wgpu::TextureDescriptor {
-                size: wgpu::Extent3d{
-                    width: size.0 as u32,
-                    height: size.1 as u32,
-                    depth_or_array_layers: 1,
+        
+        // u32 size for buffer 
+        let u32_size = std::mem::size_of::<u32>() as u32;
 
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                    usage: wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
-                ,
-                label: None
+        // create texture buffer
+        let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
+            size: ((size.0 * size.1) as u32 * u32_size) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::COPY_SRC 
+                | wgpu::BufferUsages::MAP_READ,
+            label: None,
+            mapped_at_creation: false
+        });
 
-            };
-
-            // create texture
-        let atlas = device.create_texture(&atlas_desc);
-
+ 
         // start write 
-        for ((bbox, point), pixels) in glyphs_with_bbox {
-            queue.write_texture(
-                // Tells wgpu where to copy the pixel data
-                wgpu::ImageCopyTexture {
-                    texture: &atlas,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                // The actual pixel data
-                &pixels,
-
-                // The layout of the texture
-                wgpu::ImageDataLayout {
-                    offset: (point.0 * point.1) as u64,
-                    bytes_per_row: std::num::NonZeroU32::new(4 * bbox.width as u32),
-                    rows_per_image: None, 
-                },
-
-                wgpu::Extent3d{
-                    width: bbox.width as u32,
-                    height: bbox.height as u32,
-                    depth_or_array_layers: 1 
-                }
-            );
+        for ((_, point), pixels) in glyphs_with_bbox {
+            queue.write_buffer(&atlas_buf,
+                (point.0 * point.1) as u64,
+                &pixels);
         }
 
-        return atlas;
+       return atlas_buf;
     }
 
+    // creates a new FontAtlas struct
     pub async fn new(&self, data: String, font_size: f32)
         -> Self {
 
@@ -132,23 +104,24 @@ impl FontAtlas {
         // zip the pixels with boxes
         let pos_glpyhs = pos_boxes.into_iter().zip(pixels).collect();
 
-        // create atlas texutre
+        // create atlas texutre set up as image tex
         let atlas = self.font_atlas(pos_glpyhs, size).await;
 
-        return Self{atlas, lookup : atlas_lookup}
+        return Self{ atlas, lookup : atlas_lookup}
     }
 
-    pub fn get_glpyh_data(&self, glpyh: char) -> wgpu::TextureView {
+    // function to get glpyh data on a single char
+    // returns wgpu::BufferSlice ready to be rendered as image data
+    pub fn get_glpyh_data(&self, glpyh: char) -> wgpu::BufferSlice {
         // get position of char 
-        let pos = self.lookup.get(&glpyh);
-        use wgpu::TextureViewDescriptor;
+        let pos = self.lookup.get(&glpyh).unwrap();
+        // x,y coordinates
+        let offset_start = (pos.1.0 * pos.1.1) as u64;
+        // x,y coords plus w, h
+        let offset_end = ((pos.1.0 + pos.0.0) * (pos.1.1 + pos.0.1)) as u64;
 
-        let glpyh_desc = TextureViewDescriptor{
-            
-        }
-        
-        self.atlas.create_view()
-        
+        // return glpyh data as slice
+        return self.atlas.slice(offset_start..offset_end); 
     }
 }
 
