@@ -1,4 +1,6 @@
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};
+mod font_atlas;
+use font_atlas::font_atlas::FontAtlas;
 
 use winit::{
     event::*,
@@ -15,12 +17,18 @@ struct State {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
+    font_atlas: FontAtlas,
+    command_buf: String,
 }
 
-mod font_atlas;
+
+struct TermConfig{
+    font_dir: String,
+    font_size: f32
+}
 
 impl State {
-    async fn new(window: &Window) -> Self {
+    async fn new(window: &Window, term_config : TermConfig) -> Self {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -64,12 +72,17 @@ impl State {
         };
         surface.configure(&device, &config);
 
+        let font_atlas = FontAtlas::new(term_config.font_dir,
+                                        term_config.font_size).await;
+
         Self {
             surface,
             device,
             queue,
             config,
             size,
+            font_atlas,
+            command_buf: String::new(), 
         }
     }
 
@@ -87,7 +100,44 @@ impl State {
         false
     }
 
-    fn update(&mut self) {}
+    fn update(&mut self) {
+        let suf_tex = self.surface.get_current_texture().unwrap_err();
+        // create encoder to pipe tex copies to GPU
+        let mut glpyh_enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Text Encoder"),
+            });
+
+        // render each glpyh 
+        for glpyh in self.command_buf.chars() {
+ 
+            let glpyh_slice = self.font_atlas.get_glpyh_data(glpyh);                  
+            
+            // NOTE: We have to create the mapping THEN device.poll() before await
+            // the future. Otherwise the application will freeze.
+            let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+            glpyh_slice.map_async(wgpu::MapMode::Read);
+            self.device.poll(wgpu::Maintain::Wait);
+
+            // create buf view
+            let glpyh_data = glpyh_slice.get_mapped_range();
+            let Some(bbox) = self.font_atlas.lookup.get(&glpyh) else { panic!("no lookup for glpyh")};
+
+            //TODO: copy slice to ? and use that as wgpu buffer
+            
+            use wgpu::{ImageCopyBuffer, ImageDataLayout};
+            let img = ImageCopyBuffer{
+                buffer: ,
+                layout: ImageDataLayout{
+                    offset: 0,
+                    bytes_per_row: 1,
+                    rows_per_image: None
+                }
+            };
+            
+      }
+    }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
@@ -176,13 +226,16 @@ pub async fn run(){
     // create command reader for read_from_pty fn
     let mut reader = pty_pair.master.try_clone_reader().unwrap();
 
-    // make buffers
-    let mut command_buf = read_from_pty(&mut reader);
-    let mut scratch_buf:String = String::from("");
+       use std::env;
 
-
+    let Some(font_dir) = env::args().nth(1) else {todo!()};
+    
     // impl state
-    let mut state = State::new(&window).await;
+    let mut state = State::new(&window, TermConfig { font_dir, font_size: 18.0}).await;
+
+    // make buffers
+    state.command_buf = read_from_pty(&mut reader);
+    let mut scratch_buf:String = String::from("");
 
     // if <ESC> close window
     event_loop.run(move |event, _, control_flow| match event {
@@ -223,10 +276,10 @@ pub async fn run(){
                     // clear buffer for next cmd
                     scratch_buf.clear();
                     // push output to buffer
-                    command_buf.push_str(read_from_pty(&mut reader).as_str());
+                    state.command_buf.push_str(read_from_pty(&mut reader).as_str());
 
                     #[cfg(debug_assertions)]
-                    println!("{}", command_buf);
+                    println!("{}", state.command_buf);
 
                     // redraw window with output
                     window.request_redraw();

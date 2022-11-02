@@ -7,14 +7,14 @@ use std::collections::HashMap;
 pub struct FontAtlas {
     atlas : wgpu::Buffer,
     // point = (i16, i16) => ((w, h), (x, y))
-    lookup : HashMap<char, (Point, Point)> 
+    pub lookup : HashMap<char, (Point, Point)> 
 }
 
 impl FontAtlas {
     
     // creates the font texture atlas given a vector of rasterized glpyhs
     // and positions of where those glpyhs are using a wpu::Buffer
-    async fn font_atlas(&self, glyphs_with_bbox: Vec<((BBox, Point), Vec<u8>)>,
+    async fn font_atlas(glyphs_with_bbox: Vec<((BBox, Point), Vec<u8>)>,
             size: Point) -> wgpu::Buffer {
 
             // gpu boilerplate
@@ -59,7 +59,7 @@ impl FontAtlas {
     }
 
     // creates a new FontAtlas struct
-    pub async fn new(&self, data: String, font_size: f32)
+    pub async fn new(data: String, font_size: f32)
         -> Self {
 
         // read font from file and load data into abstraction
@@ -105,7 +105,10 @@ impl FontAtlas {
         let pos_glpyhs = pos_boxes.into_iter().zip(pixels).collect();
 
         // create atlas texutre set up as image tex
-        let atlas = self.font_atlas(pos_glpyhs, size).await;
+        let atlas = Self::font_atlas(pos_glpyhs, size).await;
+
+        // flush writes and put in GPU
+        atlas.unmap();
 
         return Self{ atlas, lookup : atlas_lookup}
     }

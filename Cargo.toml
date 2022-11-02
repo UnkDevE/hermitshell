@@ -17,6 +17,9 @@ wgpu = "0.12"
 # font deps
 fontdue = "0.7.2"
 
+# async deps
+futures-intrusive = "0.4.1"
+
 # wgpu internal feature for image loading
 [dependencies.image]
 version = "0.24"
