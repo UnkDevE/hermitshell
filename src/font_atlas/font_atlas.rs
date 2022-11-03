@@ -5,7 +5,7 @@ use crate::font_atlas::packer::BBox;
 use std::collections::HashMap;
 
 pub struct FontAtlas {
-    atlas : wgpu::Buffer,
+    pub atlas : wgpu::Buffer,
     // point = (i16, i16) => ((w, h), (x, y))
     pub lookup : HashMap<char, (Point, Point)> 
 }

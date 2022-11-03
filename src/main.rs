@@ -100,7 +100,7 @@ impl State {
         false
     }
 
-    fn update(&mut self) {
+    async fn update(&mut self) {
         let suf_tex = self.surface.get_current_texture().unwrap_err();
         // create encoder to pipe tex copies to GPU
         let mut glpyh_enc = self
@@ -109,33 +109,64 @@ impl State {
                 label: Some("Text Encoder"),
             });
 
+        // TODO: deduplicate chars in self.command_buf
+        //
         // render each glpyh 
-        for glpyh in self.command_buf.chars() {
+        for glpyh in dedup_chars {
  
             let glpyh_slice = self.font_atlas.get_glpyh_data(glpyh);                  
             
-            // NOTE: We have to create the mapping THEN device.poll() before await
-            // the future. Otherwise the application will freeze.
-            let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-            glpyh_slice.map_async(wgpu::MapMode::Read);
-            self.device.poll(wgpu::Maintain::Wait);
+            {
+                // NOTE: We have to create the mapping THEN device.poll() before await
+                // the future. Otherwise the application will freeze.
+                let res = glpyh_slice.map_async(wgpu::MapMode::Read).await;
+                self.device.poll(wgpu::Maintain::Wait);
+                if res.is_err() {
+                    panic!("error in buf read");
+                }
 
+            }
             // create buf view
             let glpyh_data = glpyh_slice.get_mapped_range();
-            let Some(bbox) = self.font_atlas.lookup.get(&glpyh) else { panic!("no lookup for glpyh")};
+            let Some(bbox) = self.font_atlas.lookup.get(&glpyh) else {panic!("no lookup for glpyh")};
+            
+            /*
+            glpyh_buf = self.device.create_buffer(&BufferDescriptor{
+                label: Some("glpyh_buf"),
+                size: glpyh_data.len() as u64,
+                usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            glpyh_buf.
 
             //TODO: copy slice to ? and use that as wgpu buffer
-            
-            use wgpu::{ImageCopyBuffer, ImageDataLayout};
             let img = ImageCopyBuffer{
                 buffer: ,
                 layout: ImageDataLayout{
                     offset: 0,
-                    bytes_per_row: 1,
+                    bytes_per_row: NonZeroU32::new(1),
                     rows_per_image: None
                 }
             };
-            
+            */
+
+            use wgpu::util::DeviceExt;
+            self.device.create_texture_with_data(&self.queue, 
+                &wgpu::TextureDescriptor{
+                    label: Some("glpyh_tex"),
+                    size: wgpu::Extent3d{
+                        height: bbox.1.1 as u32, // height
+                        width: bbox.1.0 as u32, // width
+                        depth_or_array_layers: 1 
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Uint,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                }, glpyh_data.as_ref());
+            // write buffer to texture using queue.
       }
     }
 
