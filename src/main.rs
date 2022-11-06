@@ -11,6 +11,7 @@ use winit::{
 
 use std::io::Read;
 use std::iter;
+
 struct State {
     surface: wgpu::Surface,
     device: wgpu::Device,
@@ -19,6 +20,7 @@ struct State {
     size: winit::dpi::PhysicalSize<u32>,
     font_atlas: FontAtlas,
     command_buf: String,
+    textures: HashMap<char, wgpu::Texture>
 }
 
 
@@ -26,6 +28,25 @@ struct TermConfig{
     font_dir: String,
     font_size: f32
 }
+
+use std::collections::HashMap;
+
+fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
+    let mut seen: HashMap<char, i32> = HashMap::new();
+    s.retain(|c| {
+        let is_in = seen.contains_key(&c);
+        {
+            let Some(v) = seen.get_mut(&c) else {
+                seen.insert(c, 1);
+                return is_in;
+            };
+            *v += 1;
+        }
+        return is_in;
+    });
+    return (seen, s);
+}
+
 
 impl State {
     async fn new(window: &Window, term_config : TermConfig) -> Self {
@@ -75,6 +96,44 @@ impl State {
         let font_atlas = FontAtlas::new(term_config.font_dir,
                                         term_config.font_size).await;
 
+        let mut textures: HashMap<char, wgpu::Texture> = HashMap::new();
+
+        // render each glpyh to texture
+        for glpyh in font_atlas.lookup.keys() {
+            
+            let glpyh_slice = font_atlas.get_glpyh_data(*glpyh);                  
+            {
+                // NOTE: We have to create the mapping THEN device.poll() before await
+                // the future. Otherwise the application will freeze.
+                let res = glpyh_slice.map_async(wgpu::MapMode::Read).await;
+                device.poll(wgpu::Maintain::Wait);
+                if res.is_err() {
+                    panic!("error in buf read");
+                }
+
+            }
+            // create buf view
+            let glpyh_data = glpyh_slice.get_mapped_range();
+            let Some(bbox) = font_atlas.lookup.get(&glpyh) else {panic!("no lookup for glpyh")};
+            
+            use wgpu::util::DeviceExt;
+            textures.insert(*glpyh, device.create_texture_with_data(&queue, 
+                &wgpu::TextureDescriptor{
+                    label: Some("glpyh_tex"),
+                    size: wgpu::Extent3d{
+                        height: bbox.1.1 as u32, // height
+                        width: bbox.1.0 as u32, // width
+                        depth_or_array_layers: 1 
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Uint,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                }, glpyh_data.as_ref()));
+            // write buffer to texture using queue.
+        }
+
         Self {
             surface,
             device,
@@ -83,9 +142,9 @@ impl State {
             size,
             font_atlas,
             command_buf: String::new(), 
-        }
-    }
-
+            textures 
+       }
+   }
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
@@ -100,74 +159,29 @@ impl State {
         false
     }
 
-    async fn update(&mut self) {
-        let suf_tex = self.surface.get_current_texture().unwrap_err();
-        // create encoder to pipe tex copies to GPU
+
+    fn update(&mut self) {
+        // glpyh encoder for writing glpyhs to surface
         let mut glpyh_enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Text Encoder"),
+                label: Some("Glpyh Encoder"),
             });
 
-        // TODO: deduplicate chars in self.command_buf
-        //
-        // render each glpyh 
-        for glpyh in dedup_chars {
- 
-            let glpyh_slice = self.font_atlas.get_glpyh_data(glpyh);                  
-            
-            {
-                // NOTE: We have to create the mapping THEN device.poll() before await
-                // the future. Otherwise the application will freeze.
-                let res = glpyh_slice.map_async(wgpu::MapMode::Read).await;
-                self.device.poll(wgpu::Maintain::Wait);
-                if res.is_err() {
-                    panic!("error in buf read");
-                }
 
-            }
-            // create buf view
-            let glpyh_data = glpyh_slice.get_mapped_range();
-            let Some(bbox) = self.font_atlas.lookup.get(&glpyh) else {panic!("no lookup for glpyh")};
-            
-            /*
-            glpyh_buf = self.device.create_buffer(&BufferDescriptor{
-                label: Some("glpyh_buf"),
-                size: glpyh_data.len() as u64,
-                usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+        let surface = self.surface.get_current_texture().unwrap();
 
-            glpyh_buf.
+        // set the position for drawing charecters
+        let mut start = (0,0);
+        for cbuf_char in self.command_buf.chars() {
+            let Some(tex) = self.textures.get(&cbuf_char) else {panic!("no tex")};
+            let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else {panic!("no bbox")};
 
-            //TODO: copy slice to ? and use that as wgpu buffer
-            let img = ImageCopyBuffer{
-                buffer: ,
-                layout: ImageDataLayout{
-                    offset: 0,
-                    bytes_per_row: NonZeroU32::new(1),
-                    rows_per_image: None
-                }
-            };
-            */
-
-            use wgpu::util::DeviceExt;
-            self.device.create_texture_with_data(&self.queue, 
-                &wgpu::TextureDescriptor{
-                    label: Some("glpyh_tex"),
-                    size: wgpu::Extent3d{
-                        height: bbox.1.1 as u32, // height
-                        width: bbox.1.0 as u32, // width
-                        depth_or_array_layers: 1 
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Uint,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                }, glpyh_data.as_ref());
-            // write buffer to texture using queue.
-      }
+            // TODO: create bindgroup  
+            // add poisition for next char
+            start.0 += bbox.0.0; // set as width
+            start.1 += bbox.0.1; // set as height
+        }
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
