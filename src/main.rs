@@ -2,7 +2,8 @@ use portable_pty::{native_pty_system, PtySize, CommandBuilder};
 mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 
-use wgpu::Sampler;
+use bytemuck;
+
 use winit::{
     event::*,
     window::Window,
@@ -13,18 +14,60 @@ use winit::{
 use std::io::Read;
 use std::iter;
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    tex_coords: [f32; 2],
+}
+
+impl Vertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        use std::mem;
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
+        }
+    }
+}
+
+const GLPYH_VERTICES: &[Vertex] = &[
+    // Changed
+    Vertex { position: [0.0,0.0,0.0], tex_coords: [0.0, 0.0], }, // b lh corner
+    Vertex { position: [0.0,1.0,0.0], tex_coords: [0.0, 1.0], }, // t lh coner
+    Vertex { position: [1.0,0.0,0.0], tex_coords: [1.0, 0.0]}, // b rh corner
+    Vertex { position: [1.0,1.0,0.0], tex_coords: [1.0,1.0], }, // t rh corner
+];
+
+ 
 struct State {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
+    render_pipeline: wgpu::RenderPipeline,
     font_atlas: FontAtlas,
-    command_buf: String,
-    textures: HashMap<char, wgpu::BindGroup>
+    glpyhs: HashMap<char, wgpu::BindGroup>,
+    shell_buf : ShellBuf
 }
 
-
+struct ShellBuf {
+    command_str: String,
+    glpyhs_pos: Vec<(i16, i16)>
+}
 struct TermConfig{
     font_dir: String,
     font_size: f32
@@ -97,7 +140,7 @@ impl State {
         let font_atlas = FontAtlas::new(term_config.font_dir,
                                         term_config.font_size).await;
 
-        let mut textures: HashMap<char, wgpu::BindGroup> = HashMap::new();
+        let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
 
         let glpyh_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -134,6 +177,74 @@ impl State {
                 label: Some("glpyh_bind_group_layout"),
             });
 
+        let shader= device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some("shader for renderpipeline"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+        //create vertex buffer for glpyh:
+
+        use wgpu::util::DeviceExt;
+        let vertex_buffer = device.create_buffer_init(
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(GLPYH_VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+            }
+        );
+
+        // some boilerplate
+        let render_pipeline_layout = device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[&glpyh_layout], 
+                push_constant_ranges: &[],
+            }
+        );
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent::REPLACE,
+                        alpha: wgpu::BlendComponent::REPLACE,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
+                // or Features::POLYGON_MODE_POINT
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            // If the pipeline will be used with a multiview render pass, this
+            // indicates how many array layers the attachments will have.
+            multiview: None,
+        });
+
+       
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
             
@@ -148,7 +259,7 @@ impl State {
                 }
 
             }
-            // create buf view
+            // create buf view and lookup bounding box
             let glpyh_data = glpyh_slice.get_mapped_range();
             let Some(bbox) = font_atlas.lookup.get(&glpyh) else {panic!("no lookup for glpyh")};
             
@@ -172,7 +283,7 @@ impl State {
             let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
 
             // write texture to bindgroup using device.
-            textures.insert(*glpyh, device.create_bind_group(
+            glpyhs.insert(*glpyh, device.create_bind_group(
                 &wgpu::BindGroupDescriptor {
                     layout: &glpyh_layout,
                     entries: &[
@@ -196,11 +307,13 @@ impl State {
             queue,
             config,
             size,
+            render_pipeline,
             font_atlas,
-            command_buf: String::new(), 
-            textures 
+            shell_buf: ShellBuf{command_str: String::new(), glpyhs_pos: vec![]},
+            glpyhs 
        }
    }
+
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
@@ -229,14 +342,14 @@ impl State {
 
         // set the position for drawing charecters
         let mut start = (0,0);
-        for cbuf_char in self.command_buf.chars() {
-            let Some(tex) = self.textures.get(&cbuf_char) else {panic!("no tex")};
+        for cbuf_char in self.shell_buf.command_str.chars() {
+            let Some(tex) = self.glpyhs.get(&cbuf_char) else {panic!("no tex")};
             let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else {panic!("no bbox")};
 
-            // TODO: create bindgroup  
             // add poisition for next char
             start.0 += bbox.0.0; // set as width
             start.1 += bbox.0.1; // set as height
+            self.shell_buf.glpyhs_pos.push(start);
         }
     }
 
@@ -253,7 +366,7 @@ impl State {
             });
 
         {
-            let _render_pass = encoder.begin_render_pass(
+            let render_pass = encoder.begin_render_pass(
                 &wgpu::RenderPassDescriptor {
                     label: Some("Render Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -271,7 +384,18 @@ impl State {
                     }).unwrap()],
                     depth_stencil_attachment: None,
                 });
+
+                    
+            for chr in self.shell_buf.command_str.chars() {
+
+                render_pass.set_pipeline(&self.render_pipeline);
+                render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]); // NEW!
+                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
             }
+        }
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
@@ -335,7 +459,7 @@ pub async fn run(){
     let mut state = State::new(&window, TermConfig { font_dir, font_size: 18.0}).await;
 
     // make buffers
-    state.command_buf = read_from_pty(&mut reader);
+    state.shell_buf.command_str = read_from_pty(&mut reader);
     let mut scratch_buf:String = String::from("");
 
     // if <ESC> close window
@@ -377,10 +501,11 @@ pub async fn run(){
                     // clear buffer for next cmd
                     scratch_buf.clear();
                     // push output to buffer
-                    state.command_buf.push_str(read_from_pty(&mut reader).as_str());
+                    state.shell_buf.command_str
+                            .push_str(read_from_pty(&mut reader).as_str());
 
                     #[cfg(debug_assertions)]
-                    println!("{}", state.command_buf);
+                    println!("{}", state.shell_buf.command_str);
 
                     // redraw window with output
                     window.request_redraw();
