@@ -47,7 +47,7 @@ const GLPYH_VERTICES: &[Vertex] = &[
     // Changed
     Vertex { position: [0.0,0.0,0.0], tex_coords: [0.0, 0.0], }, // b lh corner
     Vertex { position: [0.0,1.0,0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-    Vertex { position: [1.0,0.0,0.0], tex_coords: [1.0, 0.0]}, // b rh corner
+    Vertex { position: [1.0,0.0,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
     Vertex { position: [1.0,1.0,0.0], tex_coords: [1.0,1.0], }, // t rh corner
 ];
 
@@ -181,16 +181,6 @@ impl State {
             label: Some("shader for renderpipeline"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
-        //create vertex buffer for glpyh:
-
-        use wgpu::util::DeviceExt;
-        let vertex_buffer = device.create_buffer_init(
-        &wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(GLPYH_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-            }
-        );
 
         // some boilerplate
         let render_pipeline_layout = device.create_pipeline_layout(
@@ -263,7 +253,6 @@ impl State {
             let glpyh_data = glpyh_slice.get_mapped_range();
             let Some(bbox) = font_atlas.lookup.get(&glpyh) else {panic!("no lookup for glpyh")};
             
-            use wgpu::util::DeviceExt;
             let tex = device.create_texture_with_data(&queue, 
                 &wgpu::TextureDescriptor{
                     label: Some("glpyh_tex"),
@@ -301,6 +290,7 @@ impl State {
             ));
         }
 
+        // pack into struct
         Self {
             surface,
             device,
@@ -338,19 +328,34 @@ impl State {
             });
 
 
+        // get surfaces
         let surface = self.surface.get_current_texture().unwrap();
 
         // set the position for drawing charecters
         let mut start = (0,0);
-        for cbuf_char in self.shell_buf.command_str.chars() {
-            let Some(tex) = self.glpyhs.get(&cbuf_char) else {panic!("no tex")};
-            let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else {panic!("no bbox")};
+        for line in self.shell_buf.command_str.lines(){
+            for cbuf_char in line.chars() {
+                let Some(tex) = self.glpyhs.get(&cbuf_char) else {panic!("no tex")};
+                let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else {panic!("no bbox")};
 
-            // add poisition for next char
-            start.0 += bbox.0.0; // set as width
-            start.1 += bbox.0.1; // set as height
-            self.shell_buf.glpyhs_pos.push(start);
+                // add poisition for next char
+                start.0 += bbox.0.0; // set as width
+                start.1 += bbox.0.1; // set as height
+                self.shell_buf.glpyhs_pos.push(start);
+            }
+            start.0 += 
         }
+        //create vertex buffer for glpyhs
+      
+        let vertex_buffer = self.device.create_buffer_init(
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(),
+            usage: wgpu::BufferUsages::VERTEX,
+            }
+        );
+
+
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -387,14 +392,14 @@ impl State {
 
                     
             for chr in self.shell_buf.command_str.chars() {
+                let Some(glpyh) = &self.glpyhs.get(&chr)
+                    else {
+                        panic!("glpyh unsupported");
+                    };
 
-                render_pass.set_pipeline(&self.render_pipeline);
-                render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]); // NEW!
-                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
             }
+            
         }
 
         self.queue.submit(iter::once(encoder.finish()));
