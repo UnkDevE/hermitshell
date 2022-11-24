@@ -43,7 +43,6 @@ pub async fn run(){
     let window = WindowBuilder::new().build(&event_loop).unwrap();
     window.set_title("hermitshell");
 
-
     // spawn os-specific shell
     #[cfg(target_os = "windows")]
     let cmd = CommandBuilder::new("cmd");
@@ -56,7 +55,7 @@ pub async fn run(){
     // create command reader for read_from_pty fn
     let mut reader = pty_pair.master.try_clone_reader().unwrap();
 
-       use std::env;
+    use std::env;
 
     let Some(font_dir) = env::args().nth(1) else {todo!()};
     
@@ -64,7 +63,7 @@ pub async fn run(){
     let mut state = State::new(&window, TermConfig { font_dir, font_size: 18.0}).await;
 
     // make buffers
-    state.shell_buf.command_str = read_from_pty(&mut reader);
+    let mut command_str = read_from_pty(&mut reader);
     let mut scratch_buf:String = String::from("");
 
     // if <ESC> close window
@@ -91,6 +90,8 @@ pub async fn run(){
                 ..} => {
                     // pop used to remove last char not for output
                     scratch_buf.pop();
+                    state.shell_buf.string_buf.pop();
+                    window.request_redraw();
                 }
             WindowEvent::KeyboardInput {
                 input: KeyboardInput {
@@ -106,11 +107,10 @@ pub async fn run(){
                     // clear buffer for next cmd
                     scratch_buf.clear();
                     // push output to buffer
-                    state.shell_buf.command_str
-                            .push_str(read_from_pty(&mut reader).as_str());
+                    command_str.push_str(read_from_pty(&mut reader).as_str());
 
                     #[cfg(debug_assertions)]
-                    println!("{}", state.shell_buf.command_str);
+                    println!("{}", command_str);
 
                     // redraw window with output
                     window.request_redraw();
@@ -118,6 +118,8 @@ pub async fn run(){
             WindowEvent::ReceivedCharacter(char_grabbed) =>{
                 // char is borrowed here so we clone
                 scratch_buf.push(char_grabbed.clone());
+                state.shell_buf.string_buf.push(char_grabbed.clone());
+                // redraw code
                 window.request_redraw();
             }
             _ => {}

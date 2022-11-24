@@ -2,6 +2,7 @@ mod font_atlas;
 
 use font_atlas::font_atlas::FontAtlas;
 
+use wgpu::util::DeviceExt;
 use winit::{
     event::*,
     window::Window
@@ -37,14 +38,6 @@ impl Vertex {
     }
 }
 
-const GLPYH_VERTICES: &[Vertex] = &[
-    // Changed
-    Vertex { position: [0.0,0.0,0.0], tex_coords: [0.0, 0.0], }, // b lh corner
-    Vertex { position: [0.0,1.0,0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-    Vertex { position: [1.0,0.0,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
-    Vertex { position: [1.0,1.0,0.0], tex_coords: [1.0,1.0], }, // t rh corner
-];
-
  
 pub struct State {
     surface: wgpu::Surface,
@@ -56,12 +49,11 @@ pub struct State {
     pub font_atlas: FontAtlas,
     glpyhs: HashMap<char, wgpu::BindGroup>,
     pub shell_buf : ShellBuf,
-    glpyh_verts: wgpu::Buffer 
 }
 
 pub struct ShellBuf {
     pub string_buf: String,
-    pub glpyhs_pos: Vec<((i16, i16),(i16, i16))>
+    pub glpyhs_pos: Vec<wgpu::Buffer>
 }
 pub struct TermConfig{
     pub font_dir: String,
@@ -281,17 +273,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             ));
         }
 
-        use wgpu::util::DeviceExt;
-        //create vertex buffer for glpyhs
-        let glpyh_verts = device.create_buffer_init(
-        &wgpu::util::BufferInitDescriptor {
-            label: Some("Generic glpyh vertex buffer"),
-            contents: bytemuck::cast_slice(GLPYH_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-            }
-        );
-
-        // pack into struct
+               // pack into struct
         Self {
             surface,
             device,
@@ -302,7 +284,6 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             font_atlas,
             shell_buf: ShellBuf{string_buf: String::new(), glpyhs_pos: vec![]},
             glpyhs,
-            glpyh_verts             
        }
    }
 
@@ -317,32 +298,44 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
 
     #[allow(unused_variables)]
     pub fn input(&mut self, event: &WindowEvent) -> bool {
-        let surface = self.surface.get_current_texture().unwrap();
+        false
+    }
 
+    pub fn update(&mut self) {
         // set the position for drawing charecters
         let mut start = (0,0);
         for line in self.shell_buf.string_buf.lines(){
             for cbuf_char in line.chars() {
-                let Some(tex) = self.glpyhs.get(&cbuf_char) else {panic!("no tex")};
                 let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else {panic!("no bbox")};
                 // add poisition for next char
                 start.0 += bbox.0.0; // set as width
                 // if start smaller than bbox then set as bbox 
                 if start.1 < bbox.0.1 { start.1 = bbox.0.1; }
-                // push coords:
+
+                // create coords:
                 // start pos , bbox width + pos, bbox height + height
-                self.shell_buf.glpyhs_pos.push((start,
-                        (bbox.1.0 + start.0, start.1 + bbox.0.1)));
+                let glpyh_vert: &[Vertex] = &[
+                    Vertex { position: [start.0 as f32, start.1 as f32, 0.0], tex_coords: [0.0, 0.0], }, // b lh corner
+                    Vertex { position: [start.0 as f32, (start.1 + bbox.0.1) as f32, 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
+                    Vertex { position: [(start.0 + bbox.0.0) as f32,start.1 as f32,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+                    Vertex { position: [(start.0 + bbox.0.0) as f32,(start.1 + bbox.0.1) as f32,0.0], tex_coords: [1.0,1.0], }, // t rh corner
+                ];
+
+                // create buffer for position
+                let glpyh_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { 
+                    label: Some(&format!("buffer {}", cbuf_char)),
+                    contents: bytemuck::cast_slice(glpyh_vert),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                self.shell_buf.glpyhs_pos.push(glpyh_buf);
+
             }
+
             // move down by height 
             start.1 += start.1;
         }
-        return true;
     }
-
-
-    pub fn update(&mut self) {
-        }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
@@ -357,7 +350,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             });
 
         {
-            let render_pass = encoder.begin_render_pass(
+            let mut render_pass = encoder.begin_render_pass(
                 &wgpu::RenderPassDescriptor {
                     label: Some("Render Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -377,13 +370,16 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                 });
 
                     
-            for chr in self.shell_buf.string_buf.chars() {
+            render_pass.set_pipeline(&self.render_pipeline);
+            for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
                 let Some(glpyh) = &self.glpyhs.get(&chr)
                     else {
                         panic!("glpyh unsupported");
                     };
+                render_pass.set_bind_group(0, &glpyh, &[]);
+                render_pass.set_vertex_buffer(0, self.shell_buf.glpyhs_pos.get(i).unwrap().slice(..));
+                render_pass.draw(0..4, 0..1);
             }
-            
         }
 
         self.queue.submit(iter::once(encoder.finish()));

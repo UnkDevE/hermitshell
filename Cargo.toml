@@ -19,7 +19,8 @@ fontdue = "0.7.2"
 
 # async deps
 futures-intrusive = "0.4.1"
-bytemuck = "1.12.3"
+bytemuck = {version = "1.12.3", features = ["derive"]}
+
 
 # wgpu internal feature for image loading
 [dependencies.image]
