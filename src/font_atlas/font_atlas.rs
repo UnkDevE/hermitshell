@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 pub struct FontAtlas {
     pub atlas : wgpu::Buffer,
-    // point = (i16, i16) => ((w, h), (x, y))
+    // point = (u32, u32) => ((w, h), (x, y))
     pub lookup : HashMap<char, (Point, Point)> 
 }
 
@@ -34,24 +34,23 @@ impl FontAtlas {
                 .await
                 .unwrap();
 
-        
-        // u32 size for buffer 
-        let u32_size = std::mem::size_of::<u32>() as u32;
+        // u8 size for buffer 
+        let u8_size = std::mem::size_of::<u8>() as u64;
 
         // create texture buffer
         let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
-            size: ((size.0 * size.1) as u32 * u32_size) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::COPY_SRC 
-                | wgpu::BufferUsages::MAP_READ,
+            size: ((size.0 * size.1) as u64 * u8_size) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::MAP_READ
+                | wgpu::BufferUsages::COPY_DST,
             label: None,
-            mapped_at_creation: false
+            mapped_at_creation: false 
         });
 
  
         // start write 
         for ((_, point), pixels) in glyphs_with_bbox {
             queue.write_buffer(&atlas_buf,
-                (point.0 * point.1) as u64,
+                (point.0 * point.1) as u64 * u8_size * pixels.len() as u64,
                 &pixels);
         }
 
@@ -83,12 +82,14 @@ impl FontAtlas {
             pixels.push(glyph);
             // push glpyh char with bbox 
             bboxes.push(BBox { glpyh: glyph_c, 
-                width: metrics.width as i16,
-                height: metrics.height as i16});
+                width: metrics.width as u32,
+                height: metrics.height as u32 });
         }
 
         // pos_boxes is not in order  
         let (size, mut pos_boxes) = packer(&mut bboxes);
+
+        print!("pos box len: {}", pos_boxes.len());
 
         // sort by comparing two glpyh positions 
         pos_boxes.sort_by(|(bbox1,_), (bbox2,_)| 
@@ -108,7 +109,7 @@ impl FontAtlas {
         let atlas = Self::font_atlas(pos_glpyhs, size).await;
 
         // flush writes and put in GPU
-        atlas.unmap();
+        // atlas.unmap();
 
         return Self{ atlas, lookup : atlas_lookup}
     }

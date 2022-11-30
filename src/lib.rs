@@ -2,6 +2,8 @@ mod font_atlas;
 
 use font_atlas::font_atlas::FontAtlas;
 
+
+use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
 use winit::{
     event::*,
@@ -82,7 +84,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::Backends::all());
-        let surface = unsafe { instance.create_surface(window) };
+        let surface = unsafe { instance.create_surface(&window) };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -112,8 +114,9 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             .unwrap();
 
         let config = wgpu::SurfaceConfiguration {
+            alpha_mode: *surface.get_supported_alpha_modes(&adapter).first().unwrap(),
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface.get_preferred_format(&adapter).unwrap(),
+            format: *surface.get_supported_formats(&adapter).first().unwrap(),
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
@@ -160,10 +163,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                 label: Some("glpyh_bind_group_layout"),
             });
 
-        let shader= device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-            label: Some("shader for renderpipeline"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
+        let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
         // some boilerplate
         let render_pipeline_layout = device.create_pipeline_layout(
@@ -184,14 +184,14 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                targets: &[wgpu::ColorTargetState {
+                targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent::REPLACE,
                         alpha: wgpu::BlendComponent::REPLACE,
                     }),
                     write_mask: wgpu::ColorWrites::ALL,
-                }],
+                })],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -225,12 +225,14 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             {
                 // NOTE: We have to create the mapping THEN device.poll() before await
                 // the future. Otherwise the application will freeze.
-                let res = glpyh_slice.map_async(wgpu::MapMode::Read).await;
-                device.poll(wgpu::Maintain::Wait);
-                if res.is_err() {
-                    panic!("error in buf read");
-                }
+                let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+                glpyh_slice.map_async(wgpu::MapMode::Read, move |result| {
+                    tx.send(result).unwrap();
+                });
 
+                device.poll(wgpu::Maintain::Wait);
+
+                rx.receive().await.unwrap().unwrap();
             }
             // create buf view and lookup bounding box
             let glpyh_data = glpyh_slice.get_mapped_range();
@@ -273,7 +275,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             ));
         }
 
-               // pack into struct
+       // pack into struct
         Self {
             surface,
             device,
@@ -365,7 +367,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                             }),
                             store: true,
                         },
-                    }).unwrap()],
+                    })],
                     depth_stencil_attachment: None,
                 });
 

@@ -81,8 +81,8 @@ fn mut_abs(i: i16) -> i16 {
 fn search_lines(rect: BBox, xlines: &mut Vec<Line>) -> Option<Line> {
     fn lines_sort(xlines: &mut Vec<Line>, carryover: bool) {
         xlines.sort_by(|line_a, line_b| {
-            let mut area_a = (line_a[1] - line_a[0]).abs() as u32;
-            let mut area_b = (line_b[1] - line_b[0]).abs() as u32;
+            let area_a = (line_a[1] - line_a[0]).abs() as u32;
+            let area_b = (line_b[1] - line_b[0]).abs() as u32;
             if !carryover {
                 area_a *= line_a[3] as u32;
                 area_b *= line_b[3] as u32;
@@ -130,9 +130,8 @@ fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
     let mut longest_line = xlines.last().unwrap().clone();
 
     // set height to rects height
-    let u_height = rect.height.try_into().unwrap();
-    longest_line[3] = u_height;
-    longest_line[4] = longest_line[4] + u_height;
+    longest_line[3] = rect.height.try_into();
+    longest_line[4] = longest_line[4] + rect.height;
 
     xlines.push(longest_line);
     return longest_line;
@@ -156,7 +155,7 @@ impl PartialEq for Placement {
 fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox, line: Line) -> Point {
     // if line is empty
     if line[4] == -1 {
-        let new_pos = (line[0] as u32 + rect.width, line[3] as u32);
+        let new_pos = (line[0] + rect.width, line[3]);
         placements.push(Placement {
             bbox: rect,
             pos: new_pos,
@@ -168,7 +167,7 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox, line: Line) -> Poi
         let new_pos = placements
             .into_iter()
             .filter(|place| place.line == line)
-            .fold((line[0] as u32 + rect.width, line[3] as u32), |mut acc, place| {
+            .fold((line[0] + rect.width, line[3]), |mut acc, place| {
                 // check if there is a leftmost point already stored
                 if acc.0 < place.pos.0 {
                     // set start pos to that point
@@ -240,9 +239,7 @@ fn wasted_space(mut placements: Vec<Placement>, lines: Vec<Line>) -> Vec<Placeme
 
         // use abs to remove overflow
         // line1.0 is the x coord of the placement
-        inv_point_place.pos = ((width as i32 - 
-                                line.pos.0 as i32).abs() as u32,
-                                line.line[3] as u32);
+        inv_point_place.pos = ((width - line.pos.0).abs(), line.line[3]);
         inversed_point.push(inv_point_place);
     }
 
@@ -360,7 +357,7 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
 
     let min_size = get_min_size(bboxes.clone());
 
-    xlines.push([0, min_size.0 as i16, min_size.0 as i16, 0, 1]);
+    xlines.push([0, min_size.0, min_size.0, 0, 1]);
 
     // we skip second step of algo to allow for the mod
 
@@ -419,7 +416,7 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     // if space len == 1 still returns
     // remove line data to return as unused
     return (
-            (xlines[0][2] as u32, xlines.last().unwrap()[4] as u32),
+            (xlines[0][2], xlines.last().unwrap()[4]),
             placements
             .into_iter()
             .map(|place| ((place.bbox, place.pos)))

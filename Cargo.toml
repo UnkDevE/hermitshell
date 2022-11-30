@@ -8,11 +8,11 @@ edition = "2021"
 portable-pty = "0.7.0"
 
 # gpu deps
-winit = {version = "0.26"}
+winit = {version = "0.27"}
 env_logger = "0.9"
 log = "0.4"
 pollster = "0.2.5"
-wgpu = "0.12"
+wgpu = "0.14"
 
 # font deps
 fontdue = "0.7.2"
