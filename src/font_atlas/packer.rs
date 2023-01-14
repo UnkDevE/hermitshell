@@ -31,7 +31,7 @@ impl PartialEq for BBox {
  *  first elem of line is start of it
  *  second is end of line
  *  third is distance between the base and height
- *  fourth is the opossing width or height left
+ *  fourth is the height left
  *  from the base line (line 0)
  *  fifth is wether line is occupied,
  *      1 => not occupied, -1 => fully occupied.
@@ -78,37 +78,36 @@ fn mut_abs(i: i16) -> i16 {
     }
 }
 
-fn search_lines(rect: BBox, xlines: &mut Vec<Line>) -> Option<Line> {
-    fn lines_sort(xlines: &mut Vec<Line>, carryover: bool) {
-        xlines.sort_by(|line_a, line_b| {
-            let mut area_a = (line_a[1] - line_a[0]).abs() as u32;
-            let mut area_b = (line_b[1] - line_b[0]).abs() as u32;
-            if !carryover {
-                area_a *= line_a[3] as u32;
-                area_b *= line_b[3] as u32;
-            } else {
-                area_a *= mut_abs(line_a[3]) as u32;
-                area_b *= mut_abs(line_b[3]) as u32;
-            }
-            return area_ord(area_a, area_b);
-        });
-    }
+fn lines_sort(mut xlines: Vec<Line>, carryover: bool) -> Vec<Line> {
+    xlines.sort_by(|line_a, line_b| {
+        let mut area_a = (line_a[1] - line_a[0]).abs() as u32;
+        let mut area_b = (line_b[1] - line_b[0]).abs() as u32;
+        if !carryover {
+            area_a *= line_a[2] as u32;
+            area_b *= line_b[2] as u32;
+        } else {
+            area_a *= mut_abs(line_a[2]) as u32;
+            area_b *= mut_abs(line_b[2]) as u32;
+        }
+        return area_ord(area_a, area_b);
+    });
 
+    return xlines;
+}
+
+
+fn search_lines(rect: BBox, xlines: Vec<Line>) -> Option<Line> {
     // do not carry over for exact
-    lines_sort(xlines, false);
-    for line in xlines.clone() {
+    let sort_lines = lines_sort(xlines.clone(), false);
+    for line in sort_lines {
         if rect.width == (line[1] - line[0]).abs() as u32 
-            && rect.height <= mut_abs(line[3]) as u32 {
+            && rect.height <= mut_abs(line[2]) as u32 {
             // selected the smallest line for the rectangle due to sort
             return Some(line);
         }
-    }
-
-    lines_sort(xlines, true);
-    for line in xlines.clone() {
         // check if any with GT width are availble
         if rect.width * rect.height <= 
-            ((line[1] - line[0]) * mut_abs(line[3])) as u32 {
+            ((line[1] - line[0]) * mut_abs(line[2])) as u32 {
             // selected the smallest line for the rectangle due to sort
             return Some(line);
         }
@@ -122,7 +121,7 @@ fn search_lines(rect: BBox, xlines: &mut Vec<Line>) -> Option<Line> {
 fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
     // sort by width
     xlines.sort_by(|line_a, line_b| {
-        return area_ord(mut_abs(line_a[1] - line_a[1]) as u32,
+        return area_ord(mut_abs(line_a[2] - line_a[1]) as u32,
             mut_abs(line_b[2] - line_a[1]) as u32);
     });
 
@@ -131,8 +130,8 @@ fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
 
     // set height to rects height
     let u_height = rect.height.try_into().unwrap();
-    longest_line[3] = u_height;
-    longest_line[4] = longest_line[4] + u_height;
+    longest_line[2] = u_height;
+    longest_line[3] = longest_line[3] + u_height;
 
     xlines.push(longest_line);
     return longest_line;
@@ -153,9 +152,10 @@ impl PartialEq for Placement {
 }
 
 // finds the leftmost position for the rectangle given
-fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox, line: Line) -> Point {
+fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox, line: Line)
+    -> Point {
     // if line is empty
-    if line[4] == -1 {
+    if line[4] == 1 {
         let new_pos = (line[0] as u32 + rect.width, line[3] as u32);
         placements.push(Placement {
             bbox: rect,
@@ -187,15 +187,16 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox, line: Line) -> Poi
 }
 
 // finds the wasted space sets them up as inversed point i.e. space leftover
-fn wasted_space(mut placements: Vec<Placement>, lines: Vec<Line>) -> Vec<Placement> {
+fn wasted_space(mut placements: Vec<Placement>, lines: Vec<Line>) 
+    -> Vec<Placement> {
     // clone max width
-    let width = (lines[0][1] - lines[0][1]).clone();
+    let width = (lines[0][2] - lines[0][1]).clone();
 
     // group all placements on the same line
     // this imperative could be changed into functional with too much effort
-
     let mut last_placement = placements.pop().unwrap();
-    let mut place_groups: Vec<Vec<Placement>> = vec![vec![last_placement.clone()]];
+    let mut place_groups: Vec<Vec<Placement>> = 
+        vec![vec![last_placement.clone()]];
 
     for pl in placements {
         if pl.line == last_placement.line {
@@ -211,6 +212,8 @@ fn wasted_space(mut placements: Vec<Placement>, lines: Vec<Line>) -> Vec<Placeme
             place_groups.push(vec![]);
         }
     }
+    // cleanup for place_groups
+    place_groups.retain(|x| {x.len() > 0}); 
 
     // then add largest to vec
     let mut largest_lines: Vec<Placement> = Vec::new();
@@ -252,10 +255,11 @@ fn wasted_space(mut placements: Vec<Placement>, lines: Vec<Line>) -> Vec<Placeme
 type Houses = Vec<Vec<Placement>>;
 
 // find adjecent lines and create a house using empty space
-fn into_houses(inv_space: &mut Vec<Placement>) -> Houses {
+fn empty_houses(inv_spaces: Vec<Placement>) 
+    -> Houses {
     let mut house_groups: Vec<Vec<Placement>> = Vec::new();
 
-    for space in inv_space.chunks(2) {
+    for space in inv_spaces.windows(2) {
         // setup
         let mut break_group = false;
         let mut last_group = house_groups.pop().unwrap_or(vec![]);
@@ -263,7 +267,8 @@ fn into_houses(inv_space: &mut Vec<Placement>) -> Houses {
         let a_height = space[1].line[3] - space[0].line[2];
 
         // group up in old group
-        let last_elem = last_group.last().unwrap().clone();
+        let last_elem = last_group.last().unwrap_or(
+            space.last().unwrap()).clone();
         // inverse if to deal with control flow
         if a_height != last_elem.line[2] {
             break_group = true;
@@ -314,10 +319,12 @@ fn house_size(house: Vec<Placement>) -> i16 {
 // merges the smaller houses with greater ones on their borders
 fn merge_houses(houses: Houses) -> Houses {
     // sort lines by area
-    fn compare_houses(line_a : &Placement, line_b: &Placement) -> std::cmp::Ordering{
+    fn compare_houses(line_a : &Placement, line_b: &Placement) 
+            -> std::cmp::Ordering{
         use std::cmp::Ordering;
         // if height LT
-        if line_a.line[2] <= line_b.line[2] && line_a.line[3] <= line_b.line[3] {
+        if line_a.line[2] <= line_b.line[2] && 
+            line_a.line[3] <= line_b.line[3] {
             return Ordering::Less;
         }
         return Ordering::Greater;
@@ -356,16 +363,14 @@ fn merge_houses(houses: Houses) -> Houses {
 pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     // first step init qual
     // add to line the width of all rects
-    let mut xlines: Vec<Line> = Vec::new();
-
     let min_size = get_min_size(bboxes.clone());
-
-    xlines.push([0, min_size.0 as i16, min_size.0 as i16, 0, 1]);
+    let mut xlines: Vec<Line> = vec![[0, min_size.0 as i16, 0, 0, 1]];
 
     // we skip second step of algo to allow for the mod
 
     // third step sort boxes in decreasing order
     sort_bboxes(bboxes);
+
     // we reverse the list to create queue
     bboxes.reverse();
 
@@ -373,10 +378,10 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
 
     // forth step select rect
     for rect in bboxes {
-        // mode 1 & 1 search, unwrap is mode 2
-        let selected_line = search_lines(rect.clone(), &mut xlines).unwrap_or_else(|| {
-            create_layer(rect.to_owned(), &mut xlines);
-            return xlines.last_mut().unwrap().clone();
+        // mode 1 & 2 search, unwrap is mode 3
+        let selected_line = search_lines(rect.clone(), xlines.clone())
+            .unwrap_or_else(|| {
+            return create_layer(rect.to_owned(), &mut xlines);
         });
 
         // fifth step
@@ -384,48 +389,36 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
         find_leftmost(&mut placements, rect.to_owned(), selected_line);
 
         // find the waste space
-        let mut inv_space = wasted_space(placements.clone(), xlines.clone()); 
+        let inv_space = wasted_space(placements.clone(), xlines.clone()); 
 
         // if more than one house group them
         if inv_space.len() > 1 {
             // get houses and group them
-            let houses = into_houses(&mut inv_space);
+            let houses = empty_houses(inv_space);
 
             // set the merged lines to our available lines
             let grouped_houses = merge_houses(houses);
-            /*
-            xlines = xlines.into_iter().chain(grouped_houses 
-                .into_iter()
-                .flatten()
-                .map(|x| x.line)).collect();
-            */
-            xlines = grouped_houses.into_iter().flatten()
-                .map(|x| x.line).collect();
+            xlines.append(&mut grouped_houses.into_iter().flatten()
+                .map(|x| x.line).collect::<Vec<Line>>());
         }
         else {
             // take directly from inv_space
-            /*
-            xlines = xlines.into_iter().chain(inv_space
-                .into_iter().map(|x| x.line)).collect();
-            */
-            xlines = inv_space.into_iter().map(|x| x.line)
-                .collect()
+            xlines.append(&mut inv_space.into_iter().map(|x| x.line)
+                .collect::<Vec<Line>>());
         }
     }
 
-    print!("xlines len {}", xlines.len());
-    print!("placements len {}", placements.len());
-
     // if space len == 1 still returns
     // remove line data to return as unused
+    print!("size predicted {} len {}", 
+           xlines[0][1] as u32 * xlines.last().unwrap()[3] as u32,
+           xlines.len());
     return (
-            (xlines[0][2] as u32, xlines.last().unwrap()[4] as u32),
-            placements
-            .into_iter()
-            .map(|place| ((place.bbox, place.pos)))
-            .collect(),
+           (xlines[0][1] as u32, xlines.last().unwrap()[3] as u32),
+            placements.into_iter()
+                .map(|place| ((place.bbox, place.pos)))
+                .collect()
     );
 }
-
 
 

@@ -14,47 +14,58 @@ impl FontAtlas {
     
     // creates the font texture atlas given a vector of rasterized glpyhs
     // and positions of where those glpyhs are using a wpu::Buffer
-    async fn font_atlas(glyphs_with_bbox: Vec<((BBox, Point), Vec<u8>)>,
-            size: Point) -> wgpu::Buffer {
+    async fn font_atlas(pixels: Vec<u8>, size: Point) -> wgpu::Buffer {
+        // gpu boilerplate - create instance for use
+        let instance = wgpu::Instance::new(wgpu::Backends::all());
 
-            // gpu boilerplate
-            let instance = wgpu::Instance::new(wgpu::Backends::all());
+        // create which driver and queue
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: None,
+                force_fallback_adapter: false
+            })
+            .await
+            .unwrap();
+        let (device, queue) = adapter
+            .request_device(&Default::default(), None)
+            .await
+            .unwrap();
 
-            // create which driver and queue
-            let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::default(),
-                    compatible_surface: None,
-                    force_fallback_adapter: false
-                })
-                .await
-                .unwrap();
-            let (device, queue) = adapter
-                .request_device(&Default::default(), None)
-                .await
-                .unwrap();
-
-        // u8 size for buffer 
-        let u8_size = std::mem::size_of::<u8>() as u64;
-
+        print!("size {} pixels size {}", size.0 * size.1, pixels.len());
         // create texture buffer
         let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
-            size: ((size.0 * size.1) as u64 * u8_size) as wgpu::BufferAddress,
+            size: pixels.len() // copy size is 1 as u8
+                as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::MAP_READ
                 | wgpu::BufferUsages::COPY_DST,
-            label: None,
+            label: Some("atlas_buffer"),
             mapped_at_creation: false 
         });
 
- 
-        // start write 
-        for ((_, point), pixels) in glyphs_with_bbox {
-            queue.write_buffer(&atlas_buf,
-                (point.0 * point.1) as u64 * u8_size * pixels.len() as u64,
-                &pixels);
-        }
+        // write as group 
+        queue.write_buffer(&atlas_buf, 0, pixels.as_slice()); 
+        
+        return atlas_buf;
+    }
 
-       return atlas_buf;
+    // puts in whitespace where packer has left it 
+    fn add_whitespace (pixels : &mut Vec<u8>, 
+                       pos_boxes : Vec<(BBox, (u32, u32))>){
+
+        // assuming pos_boxes are sorted and aligned with pixels
+        for windows in pos_boxes.windows(2) {
+            let bbox = &windows[0].0; 
+            let pos = windows[0].1;
+            let pixel_end = (bbox.width + pos.0) * (bbox.height * pos.1);
+            // take the position of the next element
+            let end_pos = windows[1].1.0 * windows[1].1.1; 
+
+            for idx in pixel_end..end_pos {
+                print!("whitspace");
+                pixels.insert(idx as usize, 0); // insert whitespace for pixel
+            }
+        }
     }
 
     // creates a new FontAtlas struct
@@ -71,15 +82,15 @@ impl FontAtlas {
         let scale = font_size / units_per_em as f32;
 
         // find raster data and bboxes
-        let mut pixels = Vec::new();
+        let mut pixels : Vec<u8> = Vec::new();
         let mut bboxes = Vec::new();
         for (&glyph_c, &id) in face.chars() {
             // convert id -> u16 
-            let (metrics, glyph) = 
+            let (metrics, mut glyph) = 
                 face.rasterize_indexed_subpixel(id.into(), scale);
 
             // push pixel data 
-            pixels.push(glyph);
+            pixels.append(&mut glyph);
             // push glpyh char with bbox 
             bboxes.push(BBox { glpyh: glyph_c, 
                 width: metrics.width as u32,
@@ -89,12 +100,13 @@ impl FontAtlas {
         // pos_boxes is not in order  
         let (size, mut pos_boxes) = packer(&mut bboxes);
 
-        print!("pos box len: {}", pos_boxes.len());
-
         // sort by comparing two glpyh positions 
         pos_boxes.sort_by(|(bbox1,_), (bbox2,_)| 
                           face.lookup_glyph_index(bbox1.glpyh)
                           .cmp(&face.lookup_glyph_index(bbox2.glpyh)));
+
+        // ptr return of pixels.
+        Self::add_whitespace(&mut pixels, pos_boxes.clone());
 
         let mut atlas_lookup : HashMap<char, (Point, Point)> = HashMap::new();
 
@@ -102,11 +114,8 @@ impl FontAtlas {
             atlas_lookup.insert(bbox.glpyh, ((bbox.width, bbox.height), point));
         }
 
-        // zip the pixels with boxes
-        let pos_glpyhs = pos_boxes.into_iter().zip(pixels).collect();
-
         // create atlas texutre set up as image tex
-        let atlas = Self::font_atlas(pos_glpyhs, size).await;
+        let atlas = Self::font_atlas(pixels, size).await;
 
         // flush writes and put in GPU
         // atlas.unmap();
