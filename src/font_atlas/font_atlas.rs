@@ -14,7 +14,7 @@ impl FontAtlas {
     
     // creates the font texture atlas given a vector of rasterized glpyhs
     // and positions of where those glpyhs are using a wpu::Buffer
-    async fn font_atlas(pixels: Vec<u8>, size: Point) -> wgpu::Buffer {
+    async fn font_atlas(pixels: Vec<u8>) -> wgpu::Buffer {
         // gpu boilerplate - create instance for use
         let instance = wgpu::Instance::new(wgpu::Backends::all());
 
@@ -32,10 +32,11 @@ impl FontAtlas {
             .await
             .unwrap();
 
-        print!("size {} pixels size {}", size.0 * size.1, pixels.len());
+        let aligned = Self::aligner(pixels);
+
         // create texture buffer
         let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
-            size: pixels.len() // copy size is 1 as u8
+            size: aligned.len()  // copy size is 1 as u8
                 as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::MAP_READ
                 | wgpu::BufferUsages::COPY_DST,
@@ -44,10 +45,30 @@ impl FontAtlas {
         });
 
         // write as group 
-        queue.write_buffer(&atlas_buf, 0, pixels.as_slice()); 
+        queue.write_buffer(&atlas_buf, 0, aligned.as_slice()); 
         
         return atlas_buf;
     }
+
+    // gives if power of two and if not how much from next power 
+    fn ispowertwo (n : u64) -> bool{
+        return (n != 0) && (n & (!n - 1)) == n; 
+    }
+
+    // force pixels into alignment
+    fn aligner (mut pixels : Vec<u8>) -> Vec<u8> {
+        if Self::ispowertwo(pixels.len() as u64) {  
+            return pixels;
+        }
+        else { 
+            let len = pixels.len();
+            let next = len.next_power_of_two();
+            for _i in len..next {
+                pixels.push(0);
+            }
+        }
+        return pixels;
+    } 
 
     // puts in whitespace where packer has left it 
     fn add_whitespace (pixels : &mut Vec<u8>, 
@@ -98,7 +119,7 @@ impl FontAtlas {
         }
 
         // pos_boxes is not in order  
-        let (size, mut pos_boxes) = packer(&mut bboxes);
+        let (_size, mut pos_boxes) = packer(&mut bboxes);
 
         // sort by comparing two glpyh positions 
         pos_boxes.sort_by(|(bbox1,_), (bbox2,_)| 
@@ -115,7 +136,7 @@ impl FontAtlas {
         }
 
         // create atlas texutre set up as image tex
-        let atlas = Self::font_atlas(pixels, size).await;
+        let atlas = Self::font_atlas(pixels).await;
 
         // flush writes and put in GPU
         // atlas.unmap();
