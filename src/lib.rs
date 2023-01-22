@@ -1,8 +1,6 @@
 mod font_atlas;
 
 use font_atlas::font_atlas::FontAtlas;
-
-
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
 use winit::{
@@ -97,7 +95,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    label: None,
+                    label: Some("lib adapter"),
                     features: wgpu::Features::empty(),
                     // WebGL doesn't support all of wgpu's features, so if
                     // we're building for the web we'll have to disable some.

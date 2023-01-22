@@ -14,7 +14,7 @@ impl FontAtlas {
     
     // creates the font texture atlas given a vector of rasterized glpyhs
     // and positions of where those glpyhs are using a wpu::Buffer
-    async fn font_atlas(pixels: Vec<u8>) -> wgpu::Buffer {
+    async fn font_atlas(pixels: &mut Vec<u8>) -> wgpu::Buffer {
         // gpu boilerplate - create instance for use
         let instance = wgpu::Instance::new(wgpu::Backends::all());
 
@@ -32,11 +32,14 @@ impl FontAtlas {
             .await
             .unwrap();
 
-        let aligned = Self::aligner(pixels);
+        // start at 8 for map align, 
+        let mut aligned = Vec::from([0 as u8; 8]);
+        aligned.append(pixels);
+        aligned = Self::aligner(aligned);
 
         // create texture buffer
         let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
-            size: aligned.len()  // copy size is 1 as u8
+            size: aligned.len() 
                 as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::MAP_READ
                 | wgpu::BufferUsages::COPY_DST,
@@ -78,7 +81,7 @@ impl FontAtlas {
         for windows in pos_boxes.windows(2) {
             let bbox = &windows[0].0; 
             let pos = windows[0].1;
-            let pixel_end = (bbox.width + pos.0) * (bbox.height * pos.1);
+            let pixel_end = (bbox.width + pos.0) * (bbox.height * pos.1); 
             // take the position of the next element
             let end_pos = windows[1].1.0 * windows[1].1.1; 
 
@@ -136,7 +139,7 @@ impl FontAtlas {
         }
 
         // create atlas texutre set up as image tex
-        let atlas = Self::font_atlas(pixels).await;
+        let atlas = Self::font_atlas(&mut pixels).await;
 
         // flush writes and put in GPU
         // atlas.unmap();
@@ -149,11 +152,18 @@ impl FontAtlas {
     pub fn get_glpyh_data(&self, glpyh: char) -> wgpu::BufferSlice {
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
+        
+        print!("{:#?}", pos);
         // x,y coordinates
-        let offset_start = (pos.1.0 * pos.1.1) as u64;
+        let offset_start = (pos.1.0 * pos.1.1) as u64
+            + 8; // init offset
+        
         // x,y coords plus w, h
-        let offset_end = ((pos.1.0 + pos.0.0) * (pos.1.1 + pos.0.1)) as u64;
+        let offset_end = ((pos.1.0 + pos.0.0) * (pos.1.1 + pos.0.1)) 
+            as u64 + 8; // add init offset
 
+        print!("offset_start {}, offset end {}", offset_start,
+               offset_end); 
         // return glpyh data as slice
         return self.atlas.slice(offset_start..offset_end); 
     }
