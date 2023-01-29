@@ -7,7 +7,8 @@ use std::collections::HashMap;
 pub struct FontAtlas {
     pub atlas : wgpu::Buffer,
     // point = (u32, u32) => ((w, h), (x, y))
-    pub lookup : HashMap<char, (Point, Point)> 
+    pub lookup : HashMap<char, (Point, Point)>,
+    pub atlas_size : Point,
 }
 
 impl FontAtlas {
@@ -103,7 +104,7 @@ impl FontAtlas {
 
         // calculate scale of the font
         let units_per_em = face.units_per_em();
-        let scale = font_size / units_per_em as f32;
+        let scale = units_per_em / font_size;
 
         // find raster data and bboxes
         let mut pixels : Vec<u8> = Vec::new();
@@ -122,7 +123,7 @@ impl FontAtlas {
         }
 
         // pos_boxes is not in order  
-        let (_size, mut pos_boxes) = packer(&mut bboxes);
+        let (size, mut pos_boxes) = packer(&mut bboxes);
 
         // sort by comparing two glpyh positions 
         pos_boxes.sort_by(|(bbox1,_), (bbox2,_)| 
@@ -135,7 +136,8 @@ impl FontAtlas {
         let mut atlas_lookup : HashMap<char, (Point, Point)> = HashMap::new();
 
         for (bbox, point) in pos_boxes.clone() {
-            atlas_lookup.insert(bbox.glpyh, ((bbox.width, bbox.height), point));
+            atlas_lookup.insert(bbox.glpyh, ((bbox.width, bbox.height), 
+                                             point));
         }
 
         // create atlas texutre set up as image tex
@@ -144,22 +146,21 @@ impl FontAtlas {
         // flush writes and put in GPU
         // atlas.unmap();
 
-        return Self{ atlas, lookup : atlas_lookup}
+        return Self{atlas, lookup : atlas_lookup, atlas_size : size}
     }
 
     // function to get glpyh data on a single char
     // returns wgpu::BufferSlice ready to be rendered as image data
-    pub fn get_glpyh_data(&self, glpyh: char) -> wgpu::BufferSlice {
+    pub fn get_glpyh_data(&self, glpyh: char) -> wgpu::BufferSlice { 
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
         
         print!("{:#?}", pos);
         // x,y coordinates
-        let offset_start = (pos.1.0 * pos.1.1) as u64
-            + 8; // init offset
+        let offset_start = (pos.1.0 * pos.1.1) as u64 + 8; // init offset
         
         // x,y coords plus w, h
-        let offset_end = ((pos.1.0 + pos.0.0) * (pos.1.1 + pos.0.1)) 
+        let offset_end = offset_start + ((pos.1.0 + pos.0.0) * (pos.1.1 + pos.0.1)) 
             as u64 + 8; // add init offset
 
         print!("offset_start {}, offset end {}", offset_start,

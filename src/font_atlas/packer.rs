@@ -11,6 +11,7 @@
  *
  */
 
+// ALL OF THIS IS WRONG NEEDS REWRITE ~~~~~
 pub type Point = (u32, u32);
 
 #[derive(Clone)]
@@ -59,23 +60,30 @@ fn area_ord(area_a: u32, area_b: u32) -> std::cmp::Ordering {
     }
 }
 
+// allows for multiplication to carry through
+// for calculation of area
+fn area_protect<T>(i: T) -> T
+where T : num::PrimInt + std::iter::Sum {
+   if i == num::zero::<T>() {
+        return num::one::<T>();
+   } 
+   return i;
+}
+fn area_protect_abs<T>(i: T) -> T
+where T : num::Signed + std::iter::Sum {
+    if i == num::zero::<T>() {
+        return num::one::<T>();
+   } 
+   return num::abs::<T>(i);
+}
 // sorts boxes using area
 fn sort_bboxes(bboxes: &mut Vec<BBox>) {
     bboxes.sort_by(|bb_a, bb_b| {
-        let area_a = bb_a.width * bb_a.height;
-        let area_b = bb_b.width * bb_b.height;
+        // if width or height is zero change to 1
+        let area_a = area_protect(bb_a.width) * area_protect(bb_a.height);
+        let area_b = area_protect(bb_b.width) * area_protect(bb_b.height);
         return area_ord(area_a, area_b);
     });
-}
-
-// allows for multiplication to carry through
-// for calculation of area
-fn mut_abs(i: i16) -> i16 {
-    if i == 0 {
-        return 1;
-    } else {
-        return i16::abs(i);
-    }
 }
 
 fn lines_sort(mut xlines: Vec<Line>, carryover: bool) -> Vec<Line> {
@@ -86,8 +94,8 @@ fn lines_sort(mut xlines: Vec<Line>, carryover: bool) -> Vec<Line> {
             area_a *= line_a[2] as u32;
             area_b *= line_b[2] as u32;
         } else {
-            area_a *= mut_abs(line_a[2]) as u32;
-            area_b *= mut_abs(line_b[2]) as u32;
+            area_a *= area_protect_abs(line_a[2]) as u32;
+            area_b *= area_protect_abs(line_b[2]) as u32;
         }
         return area_ord(area_a, area_b);
     });
@@ -101,13 +109,13 @@ fn search_lines(rect: BBox, xlines: Vec<Line>) -> Option<Line> {
     let sort_lines = lines_sort(xlines.clone(), false);
     for line in sort_lines {
         if rect.width == (line[1] - line[0]).abs() as u32 
-            && rect.height <= mut_abs(line[2]) as u32 {
+            && rect.height <= area_protect_abs(line[2]) as u32 {
             // selected the smallest line for the rectangle due to sort
             return Some(line);
         }
         // check if any with GT width are availble
         if rect.width * rect.height <= 
-            ((line[1] - line[0]) * mut_abs(line[2])) as u32 {
+            ((line[1] - line[0]) * area_protect_abs(line[2])) as u32 {
             // selected the smallest line for the rectangle due to sort
             return Some(line);
         }
@@ -121,8 +129,8 @@ fn search_lines(rect: BBox, xlines: Vec<Line>) -> Option<Line> {
 fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
     // sort by width
     xlines.sort_by(|line_a, line_b| {
-        return area_ord(mut_abs(line_a[2] - line_a[1]) as u32,
-            mut_abs(line_b[2] - line_a[1]) as u32);
+        return area_ord(area_protect_abs(line_a[2] - line_a[1]) as u32,
+            area_protect_abs(line_b[2] - line_a[1]) as u32);
     });
 
     // clone longest to create new

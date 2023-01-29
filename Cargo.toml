@@ -21,6 +21,8 @@ fontdue = "0.7.2"
 futures-intrusive = "0.4.1"
 bytemuck = {version = "1.12.3", features = ["derive"]}
 
+# generic deps
+num = "0.4.0"
 
 # wgpu internal feature for image loading
 [dependencies.image]

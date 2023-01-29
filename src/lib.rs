@@ -75,7 +75,10 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
         }
         return is_in;
     });
-    return (seen, s); } impl State {
+    return (seen, s); 
+} 
+
+impl State {
     pub async fn new(window: &Window, term_config : TermConfig) -> Self {
         let size = window.inner_size();
 
@@ -154,13 +157,13 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         // This should match the filterable field of the
                         // corresponding Texture entry above.
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        ty: wgpu::BindingType::Sampler(
+                            wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                 ],
                 label: Some("glpyh_bind_group_layout"),
-            });
-
+            }); 
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
         // some boilerplate
@@ -215,77 +218,84 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             multiview: None,
         });
 
-       
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
-            
-            let glpyh_slice = font_atlas.get_glpyh_data(*glpyh);                  
+            print!("font_atlas lookup glpyh {}", glpyh);
             {
                 // NOTE: We have to create the mapping THEN device.poll() before await
-                // the future. Otherwise the application will freeze.
-                let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-                glpyh_slice.map_async(wgpu::MapMode::Read, move |result| {
-                    tx.send(result).unwrap();
-                });
+                let glpyh_slice = font_atlas.get_glpyh_data(*glpyh);                  
+                let (sender, receiver) = 
+                    futures_intrusive::channel::shared::oneshot_channel();
+                glpyh_slice.map_async(wgpu::MapMode::Read, 
+                                      move |v| sender.send(v).unwrap());
+                device.poll(
+                     wgpu::Maintain::Wait);
 
-                device.poll(wgpu::Maintain::Wait);
+                if let Some(Ok(())) = receiver.receive().await {
+                    // create buf view and lookup bounding box
+                    let glpyh_data = glpyh_slice.get_mapped_range();
+                    let Some(bbox) = font_atlas.lookup.get(&glpyh) else 
+                        {panic!("no lookup for glpyh")};
+                    
+                    let tex = device.create_texture_with_data(&queue, 
+                        &wgpu::TextureDescriptor{
+                            label: Some("glpyh_tex"),
+                            size: wgpu::Extent3d{
+                                height: bbox.1.1 as u32, // height
+                                width: bbox.1.0 as u32, // width
+                                depth_or_array_layers: 1 
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: wgpu::TextureFormat::Rgba8Uint,
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        }, glpyh_data.as_ref());
 
-                rx.receive().await.unwrap().unwrap();
-            }
-            // create buf view and lookup bounding box
-            let glpyh_data = glpyh_slice.get_mapped_range();
-            let Some(bbox) = font_atlas.lookup.get(&glpyh) else {panic!("no lookup for glpyh")};
-            
-            let tex = device.create_texture_with_data(&queue, 
-                &wgpu::TextureDescriptor{
-                    label: Some("glpyh_tex"),
-                    size: wgpu::Extent3d{
-                        height: bbox.1.1 as u32, // height
-                        width: bbox.1.0 as u32, // width
-                        depth_or_array_layers: 1 
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Uint,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                }, glpyh_data.as_ref());
+                    // create view for bindgroup
+                    let view = tex.create_view(
+                        &wgpu::TextureViewDescriptor::default());
 
-            // create view for bindgroup
-            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-
-            // write texture to bindgroup using device.
-            glpyhs.insert(*glpyh, device.create_bind_group(
-                &wgpu::BindGroupDescriptor {
-                    layout: &glpyh_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&glpyh_sampler),
+                    // write texture to bindgroup using device.
+                    glpyhs.insert(*glpyh, device.create_bind_group(
+                        &wgpu::BindGroupDescriptor {
+                            layout: &glpyh_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::
+                                        TextureView(&view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::
+                                        Sampler(&glpyh_sampler),
+                                }
+                            ],
+                            label: Some(&format!("glpyh bindgroup {}", *glpyh))
                         }
-                    ],
-                    label: Some(&format!("glpyh bindgroup {}", *glpyh))
+                    ));
+
+                    // cleanup
+                    drop(glpyh_slice);
+                    font_atlas.atlas.unmap();
                 }
-            ));
+            }
         }
 
        // pack into struct
-        Self {
-            surface,
-            device,
-            queue,
-            config,
-            size,
-            render_pipeline,
-            font_atlas,
-            shell_buf: ShellBuf{string_buf: String::new(), glpyhs_pos: vec![]},
-            glpyhs,
+        return Self {
+                surface,
+                device,
+                queue,
+                config,
+                size,
+                render_pipeline,
+                font_atlas,
+                shell_buf: ShellBuf{string_buf: String::new(), glpyhs_pos: vec![]},
+                glpyhs,
+           };
        }
-   }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
@@ -315,10 +325,15 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                 // create coords:
                 // start pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[
-                    Vertex { position: [start.0 as f32, start.1 as f32, 0.0], tex_coords: [0.0, 0.0], }, // b lh corner
-                    Vertex { position: [start.0 as f32, (start.1 + bbox.0.1) as f32, 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-                    Vertex { position: [(start.0 + bbox.0.0) as f32,start.1 as f32,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
-                    Vertex { position: [(start.0 + bbox.0.0) as f32,(start.1 + bbox.0.1) as f32,0.0], tex_coords: [1.0,1.0], }, // t rh corner
+                    Vertex { position: [start.0 as f32, start.1 as f32, 0.0],
+                    tex_coords: [0.0, 0.0], }, // b lh corner
+                    Vertex { position: [start.0 as f32, (start.1 + bbox.0.1)
+                        as f32, 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
+                    Vertex { position: [(start.0 + bbox.0.0) as f32,start.1 
+                        as f32,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+                    Vertex { position: [(start.0 + bbox.0.0) as f32,
+                    (start.1 + bbox.0.1) as f32,0.0], tex_coords: [1.0,1.0], },
+                    // t rh corner
                 ];
 
                 // create buffer for position
