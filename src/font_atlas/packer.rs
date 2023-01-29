@@ -86,6 +86,33 @@ fn sort_bboxes(bboxes: &mut Vec<BBox>) {
     });
 }
 
+#[cfg(test)]
+fn box_maker() -> Vec<BBox> {
+    use rand::random;
+    let boxes = Vec::new();
+    for i in 0..random() {
+        boxes.push(BBox{glpyh: 'a', width: random(), height:random()});
+    }
+    return boxes;
+}
+
+#[cfg(test)]
+fn sort_box_test(){
+   let sort = box_maker();
+   sort_bboxes(&mut sort);
+
+   let sorted = sort.into_iter().fold(|acc, e| {
+       if acc < e.height * e.width {
+           return true;
+       }
+       else {
+           return false;
+       }
+   },  true).collect();
+
+   return sorted;
+}
+
 fn lines_sort(mut xlines: Vec<Line>, carryover: bool) -> Vec<Line> {
     xlines.sort_by(|line_a, line_b| {
         let mut area_a = (line_a[1] - line_a[0]).abs() as u32;
@@ -102,7 +129,6 @@ fn lines_sort(mut xlines: Vec<Line>, carryover: bool) -> Vec<Line> {
 
     return xlines;
 }
-
 
 fn search_lines(rect: BBox, xlines: Vec<Line>) -> Option<Line> {
     // do not carry over for exact
@@ -312,18 +338,6 @@ fn empty_houses(inv_spaces: Vec<Placement>)
     return house_groups;
 }
 
-/*
-// this isn't used anymore
-// gets the area of the house
-fn house_size(house: Vec<Placement>) -> i16 {
-    return house.into_iter().fold(0, |area, place| {
-        let width = place.line[2] - place.line[1];
-        let new_area = width * place.line[3];
-        return area + new_area;
-    });
-}
-*/
-
 // merges the smaller houses with greater ones on their borders
 fn merge_houses(houses: Houses) -> Houses {
     // sort lines by area
@@ -428,5 +442,3 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
                 .collect()
     );
 }
-
-

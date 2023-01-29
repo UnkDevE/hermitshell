@@ -104,7 +104,9 @@ impl FontAtlas {
 
         // calculate scale of the font
         let units_per_em = face.units_per_em();
-        let scale = units_per_em / font_size;
+        print!("units per em {}", units_per_em);
+        let scale = units_per_em / font_size as f32;
+        print!("scale {}",scale);
 
         // find raster data and bboxes
         let mut pixels : Vec<u8> = Vec::new();
@@ -116,7 +118,10 @@ impl FontAtlas {
 
             // push pixel data 
             pixels.append(&mut glyph);
+            // print!("pixels len ", glyph.len());
             // push glpyh char with bbox 
+            // print!("width {} height {} glpyh {}", 
+            //       metrics.width, metrics.height, glyph_c);
             bboxes.push(BBox { glpyh: glyph_c, 
                 width: metrics.width as u32,
                 height: metrics.height as u32 });

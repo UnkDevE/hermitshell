@@ -23,6 +23,8 @@ bytemuck = {version = "1.12.3", features = ["derive"]}
 
 # generic deps
 num = "0.4.0"
+# test deps
+rand = "0.8.5"
 
 # wgpu internal feature for image loading
 [dependencies.image]
