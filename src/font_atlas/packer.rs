@@ -62,14 +62,14 @@ fn area_ord(area_a: u32, area_b: u32) -> std::cmp::Ordering {
 
 // allows for multiplication to carry through
 // for calculation of area
-fn area_protect<T>(i: T) -> T
+pub fn area_protect<T>(i: T) -> T
 where T : num::PrimInt + std::iter::Sum {
    if i == num::zero::<T>() {
         return num::one::<T>();
    } 
    return i;
 }
-fn area_protect_abs<T>(i: T) -> T
+pub fn area_protect_abs<T>(i: T) -> T
 where T : num::Signed + std::iter::Sum {
     if i == num::zero::<T>() {
         return num::one::<T>();

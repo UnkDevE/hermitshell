@@ -228,9 +228,9 @@ impl State {
                     futures_intrusive::channel::shared::oneshot_channel();
                 glpyh_slice.map_async(wgpu::MapMode::Read, 
                                       move |v| sender.send(v).unwrap());
-                device.poll(
-                     wgpu::Maintain::Wait);
 
+
+                device.poll(wgpu::Maintain::Wait);
                 if let Some(Ok(())) = receiver.receive().await {
                     // create buf view and lookup bounding box
                     let glpyh_data = glpyh_slice.get_mapped_range();
@@ -279,6 +279,9 @@ impl State {
                     // cleanup
                     drop(glpyh_slice);
                     font_atlas.atlas.unmap();
+                }
+                else {
+                    panic!("timeout for glpyh load");
                 }
             }
         }
