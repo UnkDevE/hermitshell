@@ -17,28 +17,9 @@ impl FontAtlas {
     
     // creates the font texture atlas given a vector of rasterized glpyhs
     // and positions of where those glpyhs are using a wpu::Buffer
-    async fn font_atlas(pixels: &mut Vec<u8>) -> wgpu::Buffer {
-
-        // gpu boilerplate - create instance for use
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
-        // create which driver and queue
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: None,
-                force_fallback_adapter: false
-            })
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&Default::default(), None)
-            .await
-            .unwrap();
-
-        // create encoder for atlas
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("atlas enc") });
-        // create texture buffer
+    // device is locked so need reference
+    fn font_atlas(pixels: &mut Vec<u8>, &device: wgpu::Device) -> wgpu::Buffer {
+       // create texture buffer
         let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
             size: pixels.len() as u64
                 as wgpu::BufferAddress,
@@ -50,10 +31,7 @@ impl FontAtlas {
 
         // write as group 
         queue.write_buffer(&atlas_buf, 0, pixels.as_slice()); 
-
-        queue.submit(Some(encoder.finish()));
         
-        atlas_buf.unmap();
         return atlas_buf;
     }
 
