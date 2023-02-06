@@ -12,13 +12,13 @@
  */
 
 // ALL OF THIS IS WRONG NEEDS REWRITE ~~~~~
-pub type Point = (u32, u32);
+pub type Point = (u64, u64);
 
 #[derive(Clone)]
 pub struct BBox {
     pub glpyh: char,
-    pub width: u32,
-    pub height: u32,
+    pub width: u64,
+    pub height: u64,
 }
 
 impl PartialEq for BBox {
@@ -49,7 +49,7 @@ fn get_min_size(bboxes: Vec<BBox>) -> Point {
 }
 
 // higher order function for sorting
-fn area_ord(area_a: u32, area_b: u32) -> std::cmp::Ordering {
+fn area_ord(area_a: u64, area_b: u64) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     if area_a < area_b {
         return Ordering::Less;
@@ -115,14 +115,14 @@ fn sort_box_test(){
 
 fn lines_sort(mut xlines: Vec<Line>, carryover: bool) -> Vec<Line> {
     xlines.sort_by(|line_a, line_b| {
-        let mut area_a = (line_a[1] - line_a[0]).abs() as u32;
-        let mut area_b = (line_b[1] - line_b[0]).abs() as u32;
+        let mut area_a = (line_a[1] - line_a[0]).abs() as u64;
+        let mut area_b = (line_b[1] - line_b[0]).abs() as u64;
         if !carryover {
-            area_a *= line_a[2] as u32;
-            area_b *= line_b[2] as u32;
+            area_a *= line_a[2] as u64;
+            area_b *= line_b[2] as u64;
         } else {
-            area_a *= area_protect_abs(line_a[2]) as u32;
-            area_b *= area_protect_abs(line_b[2]) as u32;
+            area_a *= area_protect_abs(line_a[2]) as u64;
+            area_b *= area_protect_abs(line_b[2]) as u64;
         }
         return area_ord(area_a, area_b);
     });
@@ -134,14 +134,14 @@ fn search_lines(rect: BBox, xlines: Vec<Line>) -> Option<Line> {
     // do not carry over for exact
     let sort_lines = lines_sort(xlines.clone(), false);
     for line in sort_lines {
-        if rect.width == (line[1] - line[0]).abs() as u32 
-            && rect.height <= area_protect_abs(line[2]) as u32 {
+        if rect.width == (line[1] - line[0]).abs() as u64 
+            && rect.height <= area_protect_abs(line[2]) as u64 {
             // selected the smallest line for the rectangle due to sort
             return Some(line);
         }
         // check if any with GT width are availble
         if rect.width * rect.height <= 
-            ((line[1] - line[0]) * area_protect_abs(line[2])) as u32 {
+            ((line[1] - line[0]) * area_protect_abs(line[2])) as u64 {
             // selected the smallest line for the rectangle due to sort
             return Some(line);
         }
@@ -155,8 +155,8 @@ fn search_lines(rect: BBox, xlines: Vec<Line>) -> Option<Line> {
 fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
     // sort by width
     xlines.sort_by(|line_a, line_b| {
-        return area_ord(area_protect_abs(line_a[2] - line_a[1]) as u32,
-            area_protect_abs(line_b[2] - line_a[1]) as u32);
+        return area_ord(area_protect_abs(line_a[2] - line_a[1]) as u64,
+            area_protect_abs(line_b[2] - line_a[1]) as u64);
     });
 
     // clone longest to create new
@@ -190,7 +190,7 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox, line: Line)
     -> Point {
     // if line is empty
     if line[4] == 1 {
-        let new_pos = (line[0] as u32 + rect.width, line[3] as u32);
+        let new_pos = (line[0] as u64 + rect.width, line[3] as u64);
         placements.push(Placement {
             bbox: rect,
             pos: new_pos,
@@ -202,7 +202,7 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox, line: Line)
         let new_pos = placements
             .into_iter()
             .filter(|place| place.line == line)
-            .fold((line[0] as u32 + rect.width, line[3] as u32), |mut acc, place| {
+            .fold((line[0] as u64 + rect.width, line[3] as u64), |mut acc, place| {
                 // check if there is a leftmost point already stored
                 if acc.0 < place.pos.0 {
                     // set start pos to that point
@@ -278,8 +278,8 @@ fn wasted_space(mut placements: Vec<Placement>, lines: Vec<Line>)
         // use abs to remove overflow
         // line1.0 is the x coord of the placement
         inv_point_place.pos = ((width as i32 - 
-                                line.pos.0 as i32).abs() as u32,
-                                line.line[3] as u32);
+                                line.pos.0 as i32).abs() as u64,
+                                line.line[3] as u64);
         inversed_point.push(inv_point_place);
     }
 
@@ -433,10 +433,10 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     // if space len == 1 still returns
     // remove line data to return as unused
     print!("size predicted {} len {}", 
-           xlines[0][1] as u32 * xlines.last().unwrap()[3] as u32,
+           xlines[0][1] as u64 * xlines.last().unwrap()[3] as u64,
            xlines.len());
     return (
-           (xlines[0][1] as u32, xlines.last().unwrap()[3] as u32),
+           (xlines[0][1] as u64, xlines.last().unwrap()[3] as u64),
             placements.into_iter()
                 .map(|place| ((place.bbox, place.pos)))
                 .collect()

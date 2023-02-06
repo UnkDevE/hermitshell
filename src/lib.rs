@@ -95,7 +95,7 @@ impl State {
             .await
             .unwrap();
 
-        let (device, queue) = adapter
+        let (mut device, mut queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("lib adapter"),
@@ -125,7 +125,9 @@ impl State {
         surface.configure(&device, &config);
 
         let font_atlas = FontAtlas::new(term_config.font_dir,
-                                        term_config.font_size).await;
+                                        term_config.font_size, &mut device,
+                                        &mut queue);
+
 
         let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
 
@@ -148,7 +150,9 @@ impl State {
                         ty: wgpu::BindingType::Texture {
                             multisampled: false,
                             view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            sample_type: wgpu::TextureSampleType::Float { 
+                                filterable: true
+                            },
                         },
                         count: None,
                     },
@@ -222,8 +226,10 @@ impl State {
         for glpyh in font_atlas.lookup.keys() {
             print!("font_atlas lookup glpyh {}", glpyh);
             {
-                // NOTE: We have to create the mapping THEN device.poll() before await
+                // NOTE: We have to create the mapping 
+                // THEN device.poll() before await
                 let glpyh_slice = font_atlas.get_glpyh_data(*glpyh);                  
+
                 let (sender, receiver) = 
                     futures_intrusive::channel::shared::oneshot_channel();
                 glpyh_slice.map_async(wgpu::MapMode::Read, 
@@ -241,15 +247,16 @@ impl State {
                         &wgpu::TextureDescriptor{
                             label: Some("glpyh_tex"),
                             size: wgpu::Extent3d{
-                                height: bbox.1.1 as u32, // height
-                                width: bbox.1.0 as u32, // width
+                                height: bbox.0.1 as u32, // height
+                                width: bbox.0.0 as u32, // width
                                 depth_or_array_layers: 1 
                             },
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
-                            format: wgpu::TextureFormat::Rgba8Uint,
+                            format: wgpu::TextureFormat::Rgba8UnormSrgb,
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                                | wgpu::TextureUsages::TEXTURE_BINDING,
                         }, glpyh_data.as_ref());
 
                     // create view for bindgroup
@@ -276,14 +283,13 @@ impl State {
                         }
                     ));
 
-                    // cleanup
-                    drop(glpyh_slice);
-                    font_atlas.atlas.unmap();
                 }
                 else {
                     panic!("timeout for glpyh load");
                 }
             }
+            // cleanup
+            font_atlas.atlas.unmap();
         }
 
        // pack into struct
@@ -295,7 +301,9 @@ impl State {
                 size,
                 render_pipeline,
                 font_atlas,
-                shell_buf: ShellBuf{string_buf: String::new(), glpyhs_pos: vec![]},
+                shell_buf: ShellBuf{
+                    string_buf: String::new(), glpyhs_pos: vec![]
+                },
                 glpyhs,
            };
        }
@@ -319,7 +327,9 @@ impl State {
         let mut start = (0,0);
         for line in self.shell_buf.string_buf.lines(){
             for cbuf_char in line.chars() {
-                let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else {panic!("no bbox")};
+                let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else 
+                    {panic!("no bbox")};
+
                 // add poisition for next char
                 start.0 += bbox.0.0; // set as width
                 // if start smaller than bbox then set as bbox 
@@ -340,10 +350,11 @@ impl State {
                 ];
 
                 // create buffer for position
-                let glpyh_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { 
-                    label: Some(&format!("buffer {}", cbuf_char)),
-                    contents: bytemuck::cast_slice(glpyh_vert),
-                    usage: wgpu::BufferUsages::VERTEX,
+                let glpyh_buf = self.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor { 
+                        label: Some(&format!("buffer {}", cbuf_char)),
+                        contents: bytemuck::cast_slice(glpyh_vert),
+                        usage: wgpu::BufferUsages::VERTEX,
                 });
 
                 self.shell_buf.glpyhs_pos.push(glpyh_buf);
@@ -395,7 +406,8 @@ impl State {
                         panic!("glpyh unsupported");
                     };
                 render_pass.set_bind_group(0, &glpyh, &[]);
-                render_pass.set_vertex_buffer(0, self.shell_buf.glpyhs_pos.get(i).unwrap().slice(..));
+                render_pass.set_vertex_buffer(0, self.shell_buf.glpyhs_pos.get(i)
+                                              .unwrap().slice(..));
                 render_pass.draw(0..4, 0..1);
             }
         }
