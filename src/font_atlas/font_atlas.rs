@@ -1,15 +1,20 @@
 use crate::font_atlas::packer::packer;
 use crate::font_atlas::packer::Point;
 use crate::font_atlas::packer::BBox;
+use crate::font_atlas::packer::area_protect;
+
 
 use std::collections::HashMap;
+use wgpu::MAP_ALIGNMENT;
+use wgpu::COPY_BUFFER_ALIGNMENT;
+
+const CHANNELS: u64 = 4;
 
 pub struct FontAtlas {
     pub atlas : wgpu::Buffer,
-    // point = (u64, u64) => ((w, h), offset(start, end))
-    pub lookup : HashMap<char, (Point, Point)>,
+    // point = (u64, u64) => ((w, h), offset, (x, y))
+    pub lookup : HashMap<char, (Point, u64, Point)>,
     pub atlas_size : Point,
-    atlas_len : usize,
 }
 
 impl FontAtlas {
@@ -37,18 +42,11 @@ impl FontAtlas {
     }
 
     // force pixels into alignment by adding to end
-    fn aligner_end (mut pixels : Vec<u8>, offset: u8) -> Vec<u8> {
-        use num::Integer;
-        if pixels.len().is_multiple_of(&(offset as usize)) {  
-            return pixels;
-        }
-        else { 
-            let len = pixels.len();
-            let next = len.next_multiple_of(&(offset as usize));
-            for _i in len..next {
-                pixels.push(0);
-            }
-        }
+    fn aligner_start (mut pixels : Vec<u8>, offset: u64) -> Vec<u8> {
+        use std::iter;
+        let mut offset_vec: Vec<u8> = 
+                iter::repeat(0).take(offset as usize).collect();
+        pixels.append(&mut offset_vec);
         return pixels;
     } 
 
@@ -73,28 +71,54 @@ impl FontAtlas {
 
     // force pixels into alignment
     // puts in whitespace where packer has left it 
-    fn align_to_offset (pixels : Vec<u8>, 
-                        pos_boxes : &mut Vec<(BBox, (u64, u64))>) 
-            -> Vec<u8> {
+    fn record_align_to_offset (pixels : Vec<u8>, 
+                        pos_boxes : Vec<(BBox, (u64, u64))>) 
+            -> (Vec<u8>, HashMap<char, (Point, u64, Point)>){
 
-       let mut new_pixels : Vec<u8> = Vec::from([0; 8]);
+        let mut new_pixels: Vec<u8> = vec![0; MAP_ALIGNMENT as usize]; 
+        let mut positions: HashMap<char,
+            (Point, u64, Point)> = HashMap::new();
 
-        for (bbox, pos) in pos_boxes.iter_mut() {
-            let start = (pos.0 * pos.1) as usize;
-            let end = ((pos.0 + bbox.width) * (bbox.height + pos.1)) as usize;
-            let glpyh = pixels.get(start..end).unwrap();
+        use num::Integer;
+        for (bbox, pos) in pos_boxes.into_iter() {
+            let mut start = (area_protect(pos.0) * area_protect(pos.1)) as usize;
+            if start == 1 {start = 0;}
+            let end = ((pos.0 + (bbox.width * bbox.height)) * CHANNELS) as usize;
+            let mut glpyh = pixels.get(start..end).unwrap().to_vec();
 
             // start and end of offsets recorded in positions
-            // cloning so no references
-            pos.0 = new_pixels.len().clone() as u64;
+            let mut aligned_offset : u64 = 0; 
 
-            // align by highest value 8 for MAP_READ | COPY_DST
-            new_pixels.append(&mut Self::aligner_end(glpyh.to_vec(), 8));
+            // offset of WGPU is 8 here 
+            if !glpyh.len().is_multiple_of(&(MAP_ALIGNMENT as usize)) {  
+                let len = glpyh.len() as u64;
+                let next = len.next_multiple_of(&COPY_BUFFER_ALIGNMENT) as u64;
 
-            pos.1 = new_pixels.len().clone() as u64;
+                // make offset available to storage buffers 
+                aligned_offset *= (next - len).gcd(&MAP_ALIGNMENT); 
+                if !aligned_offset.is_multiple_of(&COPY_BUFFER_ALIGNMENT) {
+                    aligned_offset *= aligned_offset.lcm(&COPY_BUFFER_ALIGNMENT);
+                }
+
+                glpyh = Self::aligner_start(glpyh, aligned_offset);
+            }
+            new_pixels.append(&mut glpyh);
+            positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
+                            aligned_offset, pos.clone())); 
         }
 
-        return new_pixels;
+        // realign pixels
+        if !new_pixels.len().is_multiple_of(&(COPY_BUFFER_ALIGNMENT as usize)) { 
+            let new_start = pixels.len().next_multiple_of(&(MAP_ALIGNMENT as usize));
+            // push need pixels to align
+            for _px in 0..new_start {
+                // we don't need to update offsets here as we are pushing 
+                // to the end of the vector.
+                new_pixels.push(0);
+            }
+        }
+
+        return (new_pixels, positions);
     }
 
     // creates a new FontAtlas struct
@@ -107,62 +131,64 @@ impl FontAtlas {
         let face = fontdue::Font::from_bytes(font_data.as_slice(), 
                                      fontdue::FontSettings::default()).unwrap();
 
-        // calculate scale of the font
-        let units_per_em = face.units_per_em();
-        print!("units per em {}", units_per_em);
-        let scale = units_per_em / font_size as f32;
-        print!("scale {}",scale);
-
         // find raster data and bboxes
         let mut pixels : Vec<u8> = Vec::new();
         let mut bboxes = Vec::new();
         for (&glyph_c, &id) in face.chars() {
             // convert id -> u16 
-            let (metrics, mut glyph) = 
-                face.rasterize_indexed_subpixel(id.into(), scale);
+            let (metrics, glyph) = 
+                face.rasterize_indexed_subpixel(id.into(), font_size);
+                        // use px 
+
+            // no alpha channel so we create ours with 0 init
+            let (_, mut rgba) = glyph.into_iter().fold((vec![], vec![]),
+                |(mut pixel, mut state), channel | {
+                if pixel.len() < 3 {
+                    pixel.push(channel);
+                }   
+                else {
+                    pixel.push(0);
+                    state.append(&mut pixel);
+                    pixel.clear();
+                }
+                return (pixel, state);
+            });
 
             // push pixel data 
-            pixels.append(&mut glyph);
+            pixels.append(&mut rgba);
             bboxes.push(BBox { glpyh: glyph_c, 
                 width: metrics.width as u64,
                 height: metrics.height as u64 });
         }
 
         // pos_boxes is not in order  
-        let (size, mut pos_boxes) = packer(&mut bboxes);
+        let (size, pos_boxes) = packer(&mut bboxes);
 
-        // sort by comparing two glpyh positions 
-        pos_boxes.sort_by(|(bbox1,_), (bbox2,_)| 
-                          face.lookup_glyph_index(bbox1.glpyh)
-                          .cmp(&face.lookup_glyph_index(bbox2.glpyh)));
-
+        // sorting for some reason drops positions
+        // so we aren't going to sort here.
         pixels = Self::add_whitespace(pixels, pos_boxes.clone());
-        pixels = Self::align_to_offset(pixels, &mut pos_boxes);
-
-        let mut atlas_lookup : HashMap<char, (Point, Point)> = HashMap::new();
-
-        for (bbox, point) in pos_boxes.clone() {
-            atlas_lookup.insert(bbox.glpyh, ((bbox.width, bbox.height), 
-                                             point));
-        }
+        let (mut pixels, atlas_lookup) =
+            Self::record_align_to_offset(pixels, pos_boxes);
 
         // create atlas texutre set up as image tex
         let atlas = Self::font_atlas(&mut pixels, device, queue);
         return Self{atlas, 
-            lookup : atlas_lookup, atlas_size : size, 
-            atlas_len: pixels.len()}
+            lookup : atlas_lookup, atlas_size : size}; 
     }
 
     // function to get glpyh data on a single char
     // returns wgpu::BufferSlice ready to be rendered as image data
-    pub fn get_glpyh_data(&self, glpyh: char) -> wgpu::BufferSlice { 
+    pub fn get_glpyh_data(&self, glpyh: char) -> 
+        (wgpu::BufferSlice, u64) {
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
-        // debug
-        print!("start {} end {} full len {}", pos.1.0, pos.1.1, 
-               self.atlas_len);
-        // return glpyh data as slice
-        return self.atlas.slice(pos.1.0 .. pos.1.1); 
+        // start = init offset (8) + x
+        use num::Integer;
+        let start = (pos.2.0).next_multiple_of(&MAP_ALIGNMENT);
+        // end = ((w * h) * x + offset) * rgba channel count  
+        let end = (start + (pos.0.0 * pos.0.1)) * CHANNELS;
+        // start on x
+        // return glpyh data as slice and offset
+        return (self.atlas.slice(start..end), pos.1); 
     }
 }
-

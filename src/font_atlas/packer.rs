@@ -85,34 +85,6 @@ fn sort_bboxes(bboxes: &mut Vec<BBox>) {
         return area_ord(area_a, area_b);
     });
 }
-
-#[cfg(test)]
-fn box_maker() -> Vec<BBox> {
-    use rand::random;
-    let boxes = Vec::new();
-    for i in 0..random() {
-        boxes.push(BBox{glpyh: 'a', width: random(), height:random()});
-    }
-    return boxes;
-}
-
-#[cfg(test)]
-fn sort_box_test(){
-   let sort = box_maker();
-   sort_bboxes(&mut sort);
-
-   let sorted = sort.into_iter().fold(|acc, e| {
-       if acc < e.height * e.width {
-           return true;
-       }
-       else {
-           return false;
-       }
-   },  true).collect();
-
-   return sorted;
-}
-
 fn lines_sort(mut xlines: Vec<Line>, carryover: bool) -> Vec<Line> {
     xlines.sort_by(|line_a, line_b| {
         let mut area_a = (line_a[1] - line_a[0]).abs() as u64;

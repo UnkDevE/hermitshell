@@ -178,14 +178,15 @@ impl State {
                 push_constant_ranges: &[],
             }
         );
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
-            },
+        let render_pipeline = 
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Render Pipeline"),
+                layout: Some(&render_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[Vertex::desc()],
+                },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
@@ -203,7 +204,8 @@ impl State {
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
+                // Setting this to anything other than
+                // Fill requires Features::POLYGON_MODE_LINE
                 // or Features::POLYGON_MODE_POINT
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // Requires Features::DEPTH_CLIP_CONTROL
@@ -228,7 +230,8 @@ impl State {
             {
                 // NOTE: We have to create the mapping 
                 // THEN device.poll() before await
-                let glpyh_slice = font_atlas.get_glpyh_data(*glpyh);                  
+                let (glpyh_slice, offset) 
+                    = font_atlas.get_glpyh_data(*glpyh);        
 
                 let (sender, receiver) = 
                     futures_intrusive::channel::shared::oneshot_channel();
@@ -243,22 +246,43 @@ impl State {
                     let Some(bbox) = font_atlas.lookup.get(&glpyh) else 
                         {panic!("no lookup for glpyh")};
                     
-                    let tex = device.create_texture_with_data(&queue, 
-                        &wgpu::TextureDescriptor{
-                            label: Some("glpyh_tex"),
-                            size: wgpu::Extent3d{
+                    let tex_size = wgpu::Extent3d{
                                 height: bbox.0.1 as u32, // height
                                 width: bbox.0.0 as u32, // width
                                 depth_or_array_layers: 1 
-                            },
+                            };
+
+                    let tex = device.create_texture(&wgpu::TextureDescriptor{
+                            label: Some("glpyh_tex"),
+                            size: tex_size,
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
                             format: wgpu::TextureFormat::Rgba8UnormSrgb,
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                                | wgpu::TextureUsages::TEXTURE_BINDING,
-                        }, glpyh_data.as_ref());
+                                | wgpu::TextureUsages::TEXTURE_BINDING
+                                | wgpu::TextureUsages::COPY_DST
+                    });
 
+                    // write from buffer
+                    queue.write_texture(
+                        wgpu::ImageCopyTexture{
+                            texture: &tex,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All},
+
+                        &glpyh_data,
+
+                        wgpu::ImageDataLayout{
+                            offset,
+                            bytes_per_row: 
+                                std::num::NonZeroU32::new(4 * bbox.0.0 as u32),
+                            rows_per_image: 
+                                std::num::NonZeroU32::new(bbox.0.1 as u32),
+                        },
+                        tex_size,
+                    );
                     // create view for bindgroup
                     let view = tex.create_view(
                         &wgpu::TextureViewDescriptor::default());
@@ -418,5 +442,3 @@ impl State {
         Ok(())
     }
 }
-
-
