@@ -1,5 +1,4 @@
 mod font_atlas;
-
 use font_atlas::font_atlas::FontAtlas;
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
@@ -275,7 +274,7 @@ impl State {
                         &glpyh_data,
 
                         wgpu::ImageDataLayout{
-                            offset,
+                            offset: offset.try_into().unwrap(),
                             bytes_per_row: 
                                 std::num::NonZeroU32::new(4 * bbox.0.0 as u32),
                             rows_per_image: 

@@ -10,10 +10,34 @@ use wgpu::COPY_BUFFER_ALIGNMENT;
 
 const CHANNELS: u64 = 4;
 
+fn is_mutliple_of_four(n : usize) -> bool
+{
+    if n == 0 {
+        return false;
+    }
+    return n&3 == 0;
+}
+fn is_mutliple_of_eight(n : usize) -> bool
+{
+    if n == 0 {
+        return false;
+    }
+    return n&7 == 0;
+}
+
+
+fn next_multiple_of_four(n : usize) -> usize 
+{
+}
+ 
+fn next_multiple_of_eight(n : usize) -> usize 
+{
+}
+ 
 pub struct FontAtlas {
     pub atlas : wgpu::Buffer,
     // point = (u64, u64) => ((w, h), offset, (x, y))
-    pub lookup : HashMap<char, (Point, u64, Point)>,
+    pub lookup : HashMap<char, (Point, usize, Point)>,
     pub atlas_size : Point,
 }
 
@@ -42,10 +66,10 @@ impl FontAtlas {
     }
 
     // force pixels into alignment by adding to end
-    fn aligner_start (mut pixels : Vec<u8>, offset: u64) -> Vec<u8> {
+    fn aligner_start (mut pixels : Vec<u8>, offset: usize) -> Vec<u8> {
         use std::iter;
         let mut offset_vec: Vec<u8> = 
-                iter::repeat(0).take(offset as usize).collect();
+                iter::repeat(0).take(offset).collect();
         pixels.append(&mut offset_vec);
         return pixels;
     } 
@@ -62,7 +86,8 @@ impl FontAtlas {
             let end_pos = windows[1].1.0 * windows[1].1.1; 
 
             for idx in pixel_end..end_pos {
-                old_pixels.insert(idx as usize, 0); // insert whitespace for pixel
+                old_pixels.insert(idx as usize, 0); // insert whitespace 
+                                                    // for pixel
             }
         }
 
@@ -73,13 +98,12 @@ impl FontAtlas {
     // puts in whitespace where packer has left it 
     fn record_align_to_offset (pixels : Vec<u8>, 
                         pos_boxes : Vec<(BBox, (u64, u64))>) 
-            -> (Vec<u8>, HashMap<char, (Point, u64, Point)>){
+            -> (Vec<u8>, HashMap<char, (Point, usize, Point)>){
 
         let mut new_pixels: Vec<u8> = vec![0; MAP_ALIGNMENT as usize]; 
         let mut positions: HashMap<char,
-            (Point, u64, Point)> = HashMap::new();
+            (Point, usize, Point)> = HashMap::new();
 
-        use num::Integer;
         for (bbox, pos) in pos_boxes.into_iter() {
             let mut start = (area_protect(pos.0) * area_protect(pos.1)) as usize;
             if start == 1 {start = 0;}
@@ -87,17 +111,19 @@ impl FontAtlas {
             let mut glpyh = pixels.get(start..end).unwrap().to_vec();
 
             // start and end of offsets recorded in positions
-            let mut aligned_offset : u64 = 0; 
+            let mut aligned_offset : usize = 8; 
 
             // offset of WGPU is 8 here 
-            if !glpyh.len().is_multiple_of(&(MAP_ALIGNMENT as usize)) {  
-                let len = glpyh.len() as u64;
-                let next = len.next_multiple_of(&COPY_BUFFER_ALIGNMENT) as u64;
+            if !is_mutliple_of_eight(glpyh.len()) {  
+                let len = glpyh.len();
+                let next = self::next_multiple_of_eight(len);
 
                 // make offset available to storage buffers 
-                aligned_offset *= (next - len).gcd(&MAP_ALIGNMENT); 
-                if !aligned_offset.is_multiple_of(&COPY_BUFFER_ALIGNMENT) {
-                    aligned_offset *= aligned_offset.lcm(&COPY_BUFFER_ALIGNMENT);
+                // overflow checking here
+                aligned_offset += self::next_multiple_of_eight(next - len);
+                    
+                if !is_mutliple_of_four(aligned_offset){
+                    aligned_offset *= next_multiple_of_four(aligned_offset);
                 }
 
                 glpyh = Self::aligner_start(glpyh, aligned_offset);
@@ -108,10 +134,11 @@ impl FontAtlas {
         }
 
         // realign pixels
-        if !new_pixels.len().is_multiple_of(&(COPY_BUFFER_ALIGNMENT as usize)) { 
-            let new_start = pixels.len().next_multiple_of(&(MAP_ALIGNMENT as usize));
+        if !is_mutliple_of_four(new_pixels.len()) {  
+            let new_start = next_multiple_of_four(new_pixels.len());
+            print!("length {} new_start {}", new_pixels.len(), new_start);
             // push need pixels to align
-            for _px in 0..new_start {
+            for _px in pixels.len()..new_start{
                 // we don't need to update offsets here as we are pushing 
                 // to the end of the vector.
                 new_pixels.push(0);
@@ -179,16 +206,17 @@ impl FontAtlas {
     // function to get glpyh data on a single char
     // returns wgpu::BufferSlice ready to be rendered as image data
     pub fn get_glpyh_data(&self, glpyh: char) -> 
-        (wgpu::BufferSlice, u64) {
+        (wgpu::BufferSlice, usize) {
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
-        // start = init offset (8) + x
-        use num::Integer;
-        let start = (pos.2.0).next_multiple_of(&MAP_ALIGNMENT);
+        // start = x aligned to 8 
+        let start : u64 = self::next_multiple_of_eight(
+            pos.2.0.try_into().unwrap()).try_into().unwrap();
         // end = ((w * h) * x + offset) * rgba channel count  
         let end = (start + (pos.0.0 * pos.0.1)) * CHANNELS;
         // start on x
         // return glpyh data as slice and offset
-        return (self.atlas.slice(start..end), pos.1); 
+        return (self.atlas.slice(start..end)
+                , pos.1); 
     }
 }
