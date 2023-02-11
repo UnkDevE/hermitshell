@@ -25,13 +25,28 @@ fn is_mutliple_of_eight(n : usize) -> bool
     return n&7 == 0;
 }
 
+fn log2(n: usize) -> usize {
+    let mut res = 0;
+    let mut num = n;
+    while num != 0 {
+        num = num >> 1;
+        res += 1;
+    } 
+    return res;
+}
+
 
 fn next_multiple_of_four(n : usize) -> usize 
 {
+    let npwtwo = 2^(log2(n));
+    return 4*(log2(npwtwo));
 }
  
 fn next_multiple_of_eight(n : usize) -> usize 
 {
+
+    let npwtwo = 2^(log2(n));
+    return 8*(log2(npwtwo));
 }
  
 pub struct FontAtlas {

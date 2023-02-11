@@ -12,7 +12,7 @@ use std::io::Read;
 
 fn read_from_pty(reader: &mut Box<dyn Read + Send>) -> String {
     // make buffer the same as a max data of the terminal
-    let mut u8_buf: [u8; (80*24)] = [0; (80*24)];
+    let mut u8_buf: [u8; 80*24] = [0; 80*24];
     reader.read(&mut u8_buf).unwrap();
 
     // convert u8 buffer to string
