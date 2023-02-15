@@ -3,7 +3,6 @@ use crate::font_atlas::packer::Point;
 use crate::font_atlas::packer::BBox;
 use crate::font_atlas::packer::area_protect;
 
-
 use std::collections::HashMap;
 use wgpu::MAP_ALIGNMENT;
 use wgpu::COPY_BUFFER_ALIGNMENT;
@@ -12,7 +11,7 @@ const CHANNELS: u64 = 4;
 
 fn is_multiple_of(n : u128, multiple: u128) -> bool
 {
-    if n == 0 {
+    if n == 0 || multiple == 0 {
         return false;
     }
     return n&(multiple - 1) == 0;
@@ -20,12 +19,14 @@ fn is_multiple_of(n : u128, multiple: u128) -> bool
 
 fn next_multiple_of(n : u128, multiple: u128) -> u128 
 {
-    if n.checked_rem(multiple).unwrap_or(0) == 0 {
-        return n;
-    }
-    let frac = n.checked_div(multiple).unwrap_or(0);
-    if frac != 0 {
-        return n * frac;
+    if !is_multiple_of(n, multiple) {
+        if n.checked_rem(multiple).unwrap_or(0) == 0 {
+            return n;
+        }
+        let frac = n.checked_div(multiple).unwrap_or(0);
+        if frac != 0 {
+            return n * frac;
+        }
     }
     return n;
 }
@@ -66,7 +67,7 @@ impl FontAtlas {
         use std::iter;
         let mut offset_vec: Vec<u8> = 
                 iter::repeat(0).take(offset).collect();
-        pixels.append(&mut offset_vec);
+        offset_vec.append(&mut pixels);
         return pixels;
     } 
 
@@ -109,9 +110,9 @@ impl FontAtlas {
             let mut offset = 0;
             // offset of WGPU is 8 here 
             if !is_multiple_of(glpyh.len() as u128,
-                MAP_ALIGNMENT as u128) {  
+                COPY_BUFFER_ALIGNMENT as u128) {  
                 let len = glpyh.len();
-                let next = self::next_multiple_of(len as u128, MAP_ALIGNMENT as u128 & COPY_BUFFER_ALIGNMENT as u128);
+                let next = self::next_multiple_of(len as u128, COPY_BUFFER_ALIGNMENT as u128);
 
                 // make offset available to storage buffers 
                 // overflow checking here
@@ -121,20 +122,6 @@ impl FontAtlas {
             new_pixels.append(&mut glpyh);
             positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
                             offset as u128, pos.clone())); 
-        }
-
-        // realign pixels
-        if !is_multiple_of(new_pixels.len() as u128, 
-                           COPY_BUFFER_ALIGNMENT as u128) {  
-            let new_start = next_multiple_of(new_pixels.len() as u128, 
-                                             COPY_BUFFER_ALIGNMENT as u128);
-            print!("length {} new_start {}", new_pixels.len(), new_start);
-            // push need pixels to align
-            for _px in (new_pixels.len() as u128)..new_start{
-                // we don't need to update offsets here as we are pushing 
-                // to the end of the vector.
-                new_pixels.push(0);
-            }
         }
 
         return (new_pixels, positions);
@@ -183,11 +170,14 @@ impl FontAtlas {
         // pos_boxes is not in order  
         let (size, pos_boxes) = packer(&mut bboxes);
 
+
         // sorting for some reason drops positions
         // so we aren't going to sort here.
         pixels = Self::add_whitespace(pixels, pos_boxes.clone());
         let (mut pixels, atlas_lookup) =
             Self::record_align_to_offset(pixels, pos_boxes);
+
+        // remove None types
 
         // create atlas texutre set up as image tex
         let atlas = Self::font_atlas(&mut pixels, device, queue);
@@ -202,15 +192,13 @@ impl FontAtlas {
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
         // start = x aligned to 8 
-        let start : u64 = self::next_multiple_of(
-            pos.2.0.try_into().unwrap(),
-            MAP_ALIGNMENT as u128).try_into().unwrap();
-        // end = ((w * h) * x + offset) * rgba channel count  
-        let end = (start + (pos.0.0 * pos.0.1)) * CHANNELS;
+        let start : u64 = pos.1 as u64;
+        // end = ((w * h) * offset_start) * rgba channel count  
+        let end = (pos.2.0 + pos.1 as u64 + (pos.0.0 * pos.0.1)) * CHANNELS;
         // start on x
         // return glpyh data as slice and offset
         return (self.atlas.slice(start..end)
-                , pos.1); 
+                , (pos.2.0 as u128) + pos.1); 
     }
 
 }
