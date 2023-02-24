@@ -351,7 +351,7 @@ impl State {
         for line in self.shell_buf.string_buf.lines(){
             for cbuf_char in line.chars() {
                 let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else 
-                    {panic!("no bbox")};
+                    { continue; };    
 
                 // add poisition for next char
                 start.0 += bbox.0.0; // set as width
