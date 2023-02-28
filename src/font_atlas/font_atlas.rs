@@ -4,10 +4,18 @@ use crate::font_atlas::packer::BBox;
 use crate::font_atlas::packer::area_protect;
 
 use std::collections::HashMap;
+use wgpu::CommandEncoderDescriptor;
 use wgpu::MAP_ALIGNMENT;
 use wgpu::COPY_BUFFER_ALIGNMENT;
 
 const CHANNELS: u64 = 4;
+
+#[derive(Clone)]
+pub struct TermConfig{
+    pub font_dir: String,
+    pub font_size: f32
+}
+
 
 fn is_multiple_of(n : u128, multiple: u128) -> bool
 {
@@ -46,7 +54,11 @@ impl FontAtlas {
     fn font_atlas(pixels: &mut Vec<u8>, 
                   device: &mut wgpu::Device, queue: &mut wgpu::Queue) -> 
         wgpu::Buffer {
-       // create texture buffer
+
+        let enc = device.create_command_encoder(
+            &CommandEncoderDescriptor { label: Some("font_atlas_enc") });
+
+        // create texture buffer
         let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
             size: pixels.len() as u64
                 as wgpu::BufferAddress,
@@ -56,9 +68,22 @@ impl FontAtlas {
             mapped_at_creation: false 
         });
 
+        
         // write as group 
         queue.write_buffer(&atlas_buf, 0, pixels.as_slice()); 
-        
+
+        // submit queue with empty command buffer to write to gpu
+        use std::iter;
+        queue.submit(iter::once(enc.finish()));
+
+        #[cfg(debug_assertions)]
+        println!("buffer submitted returning function...");
+
+        device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(debug_assertions)]
+        println!("buffer complete");
+
         return atlas_buf;
     }
 
@@ -128,9 +153,12 @@ impl FontAtlas {
     }
 
     // creates a new FontAtlas struct
-    pub fn new(data: String, font_size: f32, device: &mut wgpu::Device,
+    pub fn new(term_config: TermConfig, device: &mut wgpu::Device,
                queue: &mut wgpu::Queue)
         -> Self {
+
+        let data = term_config.font_dir;
+        let font_size = term_config.font_size;
 
         // read font from file and load data into abstraction
         let font_data = std::fs::read(data).unwrap();

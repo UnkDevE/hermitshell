@@ -1,5 +1,5 @@
 use hermitshell::State;
-use hermitshell::TermConfig;
+use hermitshell::font_atlas::font_atlas::TermConfig;
 
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};
 use winit::{
@@ -108,6 +108,7 @@ pub async fn run(){
                     scratch_buf.clear();
                     // push output to buffer
                     command_str.push_str(read_from_pty(&mut reader).as_str());
+                    state.shell_buf.string_buf.push_str(&command_str);
 
                     #[cfg(debug_assertions)]
                     println!("{}", command_str);

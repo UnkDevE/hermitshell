@@ -1,6 +1,9 @@
-mod font_atlas;
+pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
-use wgpu::include_wgsl;
+use font_atlas::font_atlas::TermConfig;
+
+
+use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
 use winit::{
     event::*,
@@ -54,12 +57,9 @@ pub struct ShellBuf {
     pub string_buf: String,
     pub glpyhs_pos: Vec<wgpu::Buffer>
 }
-pub struct TermConfig{
-    pub font_dir: String,
-    pub font_size: f32
-}
 
 use std::collections::HashMap;
+
 
 pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
     let mut seen: HashMap<char, i32> = HashMap::new();
@@ -78,9 +78,41 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
 } 
 
 impl State {
-    pub async fn new(window: &Window, term_config : TermConfig) -> Self {
-        let size = window.inner_size();
 
+
+    pub async fn new(window: &Window, term_config : TermConfig) -> Self {
+
+        let (surface, mut device, mut queue, config) = 
+            Self::surface_config(window).await;
+
+        // load fontatlas
+        let font_atlas = FontAtlas::new(term_config.clone(), &mut device,
+                                        &mut queue);
+
+
+        let (render_pipeline, glpyh_sampler, glpyh_layout) = 
+            Self::make_render_pipeline(&mut device, &config);
+
+        let glpyhs = Self::make_glpyhs(&mut device, &mut queue, 
+                                       &font_atlas, glpyh_sampler, glpyh_layout).await;
+       // pack into struct
+        return Self {
+                surface,
+                device,
+                queue,
+                config,
+                size: window.inner_size(),
+                render_pipeline,
+                font_atlas,
+                shell_buf: ShellBuf{
+                    string_buf: String::new(), glpyhs_pos: vec![]
+                },
+                glpyhs,
+           };
+    }
+
+    pub async fn surface_config(window: &Window)
+        -> (wgpu::Surface, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::Backends::all());
@@ -94,7 +126,7 @@ impl State {
             .await
             .unwrap();
 
-        let (mut device, mut queue) = adapter
+        let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("lib adapter"),
@@ -113,6 +145,7 @@ impl State {
             .await
             .unwrap();
 
+        let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration {
             alpha_mode: *surface.get_supported_alpha_modes(&adapter).first().unwrap(),
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -123,13 +156,14 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        let font_atlas = FontAtlas::new(term_config.font_dir,
-                                        term_config.font_size, &mut device,
-                                        &mut queue);
+        return (surface, device, queue, config);
+    }
 
 
-        let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
-
+     pub fn make_render_pipeline(device: &mut wgpu::Device, 
+                                 config: &wgpu::SurfaceConfiguration) -> 
+         (RenderPipeline, wgpu::Sampler, wgpu::BindGroupLayout) {
+        
         let glpyh_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -223,6 +257,16 @@ impl State {
             multiview: None,
         });
 
+        return (render_pipeline, glpyh_sampler, glpyh_layout);
+    }
+
+       pub async fn make_glpyhs(device: &mut wgpu::Device, 
+                                queue: &mut wgpu::Queue, font_atlas: &FontAtlas, 
+                                glpyh_sampler: wgpu::Sampler, glpyh_layout: wgpu::BindGroupLayout) -> 
+        HashMap<char, wgpu::BindGroup> {
+
+        let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
+
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
             print!("font_atlas lookup glpyh {}", glpyh);
@@ -238,8 +282,15 @@ impl State {
                                       move |v| sender.send(v).unwrap());
 
 
+                #[cfg(debug_assertions)]
+                println!("polling device for glpyh {} started", glpyh);
+
                 device.poll(wgpu::Maintain::Wait);
                 if let Some(Ok(())) = receiver.receive().await {
+
+                    #[cfg(debug_assertions)]
+                    println!("found glpyh mapping to texture...");
+
                     // create buf view and lookup bounding box
                     let glpyh_data = glpyh_slice.get_mapped_range();
                     let Some(bbox) = font_atlas.lookup.get(&glpyh) else 
@@ -282,6 +333,7 @@ impl State {
                         },
                         tex_size,
                     );
+
                     // create view for bindgroup
                     let view = tex.create_view(
                         &wgpu::TextureViewDescriptor::default());
@@ -306,30 +358,37 @@ impl State {
                         }
                     ));
 
+                    #[cfg(debug_assertions)]
+                    println!("glpyh {} inserted to hasmap", *glpyh)
+
                 }
                 else {
                     panic!("timeout for glpyh load");
                 }
+                #[cfg(debug_assertions)]
+                println!("polling device for glpyh {} complete", glpyh);
             }
+
+
+            // submit queue 
+            let glpyh_buf_enc = 
+                device.create_command_encoder(&CommandEncoderDescriptor{ 
+                    label: Some("glpyh_buf_enc") });
+            queue.submit(iter::once(glpyh_buf_enc.finish()));
+
+            #[cfg(debug_assertions)]
+            println!("starting submitted glpyh queue polling");
+
+            device.poll(wgpu::Maintain::Wait);
+
+            #[cfg(debug_assertions)]
+            println!("finished glpyh queue polling");
+
             // cleanup
             font_atlas.atlas.unmap();
         }
-
-       // pack into struct
-        return Self {
-                surface,
-                device,
-                queue,
-                config,
-                size,
-                render_pipeline,
-                font_atlas,
-                shell_buf: ShellBuf{
-                    string_buf: String::new(), glpyhs_pos: vec![]
-                },
-                glpyhs,
-           };
-       }
+        return glpyhs;
+    }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
@@ -402,6 +461,7 @@ impl State {
             });
 
         {
+
             let mut render_pass = encoder.begin_render_pass(
                 &wgpu::RenderPassDescriptor {
                     label: Some("Render Pass"),
@@ -413,7 +473,7 @@ impl State {
                                 g: 0.0,
                                 r: 0.0,
                                 b: 0.0,
-                                a: 1.0,
+                                a: 0.0,
                             }),
                             store: true,
                         },
@@ -422,19 +482,23 @@ impl State {
                 });
 
                     
-            render_pass.set_pipeline(&self.render_pipeline);
-            for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
-                let Some(glpyh) = &self.glpyhs.get(&chr)
-                    else {
-                        panic!("glpyh unsupported");
-                    };
-                render_pass.set_bind_group(0, &glpyh, &[]);
-                render_pass.set_vertex_buffer(0, self.shell_buf.glpyhs_pos.get(i)
-                                              .unwrap().slice(..));
-                render_pass.draw(0..4, 0..1);
-            }
-        }
+            if !self.shell_buf.string_buf.is_empty() {
+                render_pass.set_pipeline(&self.render_pipeline);
 
+                #[cfg(debug_assertions)]
+                println!("shellbuf : {}", self.shell_buf.string_buf);
+
+                for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
+                   if let Some(glpyh) = self.glpyhs.get(&chr) {
+                        render_pass.set_bind_group(0, &glpyh, &[]);
+                        render_pass.set_vertex_buffer(0, 
+                            self.shell_buf.glpyhs_pos.get(i).unwrap().slice(..));
+                        render_pass.draw(0..4, 0..1);
+                    }
+                }
+            }
+
+        }
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
 
