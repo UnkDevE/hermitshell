@@ -109,7 +109,7 @@ fn search_lines(rect: BBox, xlines: &mut Vec<Line>,
     for (n, line) in sort_lines.iter().enumerate() {
         // calculate widths 
         let width : u64 = 
-            placements.into_iter().filter(|pl| pl.line_idx == n)
+            placements.clone().into_iter().filter(|pl| pl.line_idx == n)
             .fold(xlines[n][0] as u64, |mut acc, pl| {
                 acc += pl.pos.0;
                 return acc;
@@ -185,7 +185,7 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
     }
 
     // search placements in line
-    let new_pos = placements
+    let new_pos = placements.clone()
         .into_iter()
         .filter(|place| xlines[place.line_idx] == line)
         .fold((line[0] as u64 + rect.width, line[2] as u64), |mut acc, place| {
@@ -220,11 +220,11 @@ fn wasted_space(placements:&mut Vec<Placement>, xlines: &mut Vec<Line>)
 
     // group all placements on the same line
     // this imperative could be changed into functional with too much effort
-    let mut last_placement = placements.pop().unwrap();
+    let mut last_placement = placements.clone().pop().unwrap();
     let mut place_groups: Vec<Vec<Placement>> = 
         vec![vec![last_placement.clone()]];
 
-    for pl in placements {
+    for pl in placements.clone() {
         if pl.line_idx == last_placement.line_idx {
             last_placement = pl.clone();
             place_groups.last_mut().and_then(|group| {

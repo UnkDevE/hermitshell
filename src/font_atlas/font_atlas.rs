@@ -128,25 +128,29 @@ impl FontAtlas {
 
         for (bbox, pos) in pos_boxes.into_iter() {
             let mut start = (area_protect(pos.0) * area_protect(pos.1)) as usize;
-            if start == 1 {start = 0;}
-            let end = ((pos.0 + (bbox.width * bbox.height)) * CHANNELS) as usize;
-            let mut glpyh = pixels.get(start..end).unwrap().to_vec();
+            if start == 1 {start = 0;} // get rid of carryover
 
-            let mut offset = 0;
-            // offset of WGPU is 8 here 
-            if !is_multiple_of(glpyh.len() as u128,
-                COPY_BUFFER_ALIGNMENT as u128) {  
-                let len = glpyh.len();
-                let next = self::next_multiple_of(len as u128, COPY_BUFFER_ALIGNMENT as u128);
+            let end = (start + (bbox.width * bbox.height) as usize) * CHANNELS as usize;
+            
+            if start < end {
+                let mut glpyh = pixels.get(start..end).unwrap().to_vec();
 
-                // make offset available to storage buffers 
-                // overflow checking here
-                offset = next as isize - len as isize;
-                glpyh = Self::aligner_start(glpyh, offset as usize);
+                let mut offset = 0;
+                // offset of WGPU is 8 here 
+                if !is_multiple_of(glpyh.len() as u128,
+                    COPY_BUFFER_ALIGNMENT as u128) {  
+                    let len = glpyh.len();
+                    let next = self::next_multiple_of(len as u128, COPY_BUFFER_ALIGNMENT as u128);
+
+                    // make offset available to storage buffers 
+                    // overflow checking here
+                    offset = next as isize - len as isize;
+                    glpyh = Self::aligner_start(glpyh, offset as usize);
+                }
+                new_pixels.append(&mut glpyh);
+                positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
+                                offset as u128, (start as u64, end as u64))); 
             }
-            new_pixels.append(&mut glpyh);
-            positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
-                            offset as u128, pos.clone())); 
         }
 
         return (new_pixels, positions);
@@ -202,10 +206,11 @@ impl FontAtlas {
         // sorting for some reason drops positions
         // so we aren't going to sort here.
         pixels = Self::add_whitespace(pixels, pos_boxes.clone());
+
+        // remove None types
         let (mut pixels, atlas_lookup) =
             Self::record_align_to_offset(pixels, pos_boxes);
 
-        // remove None types
 
         // create atlas texutre set up as image tex
         let atlas = Self::font_atlas(&mut pixels, device, queue);
@@ -219,14 +224,8 @@ impl FontAtlas {
         (wgpu::BufferSlice, u128) {
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
-        // start = x aligned to 8 
-        let start : u64 = pos.1 as u64;
-        // end = ((w * h) * offset_start) * rgba channel count  
-        let end = (pos.2.0 + pos.1 as u64 + (pos.0.0 * pos.0.1)) * CHANNELS;
-        // start on x
         // return glpyh data as slice and offset
-        return (self.atlas.slice(start..end)
-                , (pos.2.0 as u128) + pos.1); 
+        return (self.atlas.slice(pos.2.0..pos.2.1), pos.1); 
     }
 
 }

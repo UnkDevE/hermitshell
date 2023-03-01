@@ -95,7 +95,7 @@ impl State {
 
         let glpyhs = Self::make_glpyhs(&mut device, &mut queue, 
                                        &font_atlas, glpyh_sampler, glpyh_layout).await;
-       // pack into struct
+        // pack into struct
         return Self {
                 surface,
                 device,
@@ -265,11 +265,15 @@ impl State {
                                 glpyh_sampler: wgpu::Sampler, glpyh_layout: wgpu::BindGroupLayout) -> 
         HashMap<char, wgpu::BindGroup> {
 
+        #[cfg(debug_assertions)]
+        println!("make glpyhs has been called");
+
         let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
 
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
-            print!("font_atlas lookup glpyh {}", glpyh);
+            #[cfg(debug_assertions)]
+            println!("font_atlas lookup glpyh {}", glpyh);
             {
                 // NOTE: We have to create the mapping 
                 // THEN device.poll() before await
@@ -406,28 +410,31 @@ impl State {
 
     pub fn update(&mut self) {
         // set the position for drawing charecters
-        let mut start = (0,0);
+        let mut start : (f32, f32) = (0.0,0.0);
         for line in self.shell_buf.string_buf.lines(){
             for cbuf_char in line.chars() {
                 let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else 
                     { continue; };    
 
+                let bbox_normalized = 
+                    ((bbox.0.0 / self.config.width as u64) as f32,
+                     (bbox.0.1 / self.config.height as u64) as f32);
                 // add poisition for next char
-                start.0 += bbox.0.0; // set as width
+                start.0 += bbox_normalized.0; // set as width
                 // if start smaller than bbox then set as bbox 
-                if start.1 < bbox.0.1 { start.1 = bbox.0.1; }
+                if start.1 < bbox_normalized.1 { start.1 = bbox_normalized.1}
 
                 // create coords:
                 // start pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[
-                    Vertex { position: [start.0 as f32, start.1 as f32, 0.0],
+                    Vertex { position: [start.0 , start.1, 0.0],
                     tex_coords: [0.0, 0.0], }, // b lh corner
-                    Vertex { position: [start.0 as f32, (start.1 + bbox.0.1)
-                        as f32, 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-                    Vertex { position: [(start.0 + bbox.0.0) as f32,start.1 
-                        as f32,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
-                    Vertex { position: [(start.0 + bbox.0.0) as f32,
-                    (start.1 + bbox.0.1) as f32,0.0], tex_coords: [1.0,1.0], },
+                    Vertex { position: [start.0 , (start.1 + bbox_normalized.1)
+                        , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
+                    Vertex { position: [(start.0 + bbox_normalized.0), start.1 
+                        ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+                    Vertex { position: [(start.0 + bbox_normalized.0),
+                    (start.1 + bbox_normalized.1) ,0.0], tex_coords: [1.0,1.0], },
                     // t rh corner
                 ];
 
@@ -489,11 +496,18 @@ impl State {
                 println!("shellbuf : {}", self.shell_buf.string_buf);
 
                 for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
-                   if let Some(glpyh) = self.glpyhs.get(&chr) {
+                    
+                    #[cfg(debug_assertions)]
+                    println!("chr {} printed to shell", chr);
+                    
+                    if let Some(glpyh) = self.glpyhs.get(&chr) {
                         render_pass.set_bind_group(0, &glpyh, &[]);
                         render_pass.set_vertex_buffer(0, 
                             self.shell_buf.glpyhs_pos.get(i).unwrap().slice(..));
                         render_pass.draw(0..4, 0..1);
+
+                        #[cfg(debug_assertions)]
+                        println!("pass drawn");
                     }
                 }
             }
