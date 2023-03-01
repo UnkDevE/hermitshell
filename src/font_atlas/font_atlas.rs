@@ -1,131 +1,231 @@
 use crate::font_atlas::packer::packer;
 use crate::font_atlas::packer::Point;
 use crate::font_atlas::packer::BBox;
+use crate::font_atlas::packer::area_protect;
 
 use std::collections::HashMap;
+use wgpu::CommandEncoderDescriptor;
+use wgpu::MAP_ALIGNMENT;
+use wgpu::COPY_BUFFER_ALIGNMENT;
 
+const CHANNELS: u64 = 4;
+
+#[derive(Clone)]
+pub struct TermConfig{
+    pub font_dir: String,
+    pub font_size: f32
+}
+
+
+fn is_multiple_of(n : u128, multiple: u128) -> bool
+{
+    if n == 0 || multiple == 0 {
+        return false;
+    }
+    return n&(multiple - 1) == 0;
+}
+
+fn next_multiple_of(n : u128, multiple: u128) -> u128 
+{
+    if !is_multiple_of(n, multiple) {
+        if n.checked_rem(multiple).unwrap_or(0) == 0 {
+            return n;
+        }
+        let frac = n.checked_div(multiple).unwrap_or(0);
+        if frac != 0 {
+            return n * frac;
+        }
+    }
+    return n;
+}
+ 
 pub struct FontAtlas {
     pub atlas : wgpu::Buffer,
-    // point = (u32, u32) => ((w, h), (x, y))
-    pub lookup : HashMap<char, (Point, Point)> 
+    // point = (u64, u64) => ((w, h), offset, (x, y))
+    pub lookup : HashMap<char, (Point, u128, Point)>,
+    pub atlas_size : Point,
 }
 
 impl FontAtlas {
     
     // creates the font texture atlas given a vector of rasterized glpyhs
     // and positions of where those glpyhs are using a wpu::Buffer
-    async fn font_atlas(glyphs_with_bbox: Vec<((BBox, Point), Vec<u8>)>,
-            size: Point) -> wgpu::Buffer {
+    // device is locked so need reference
+    fn font_atlas(pixels: &mut Vec<u8>, 
+                  device: &mut wgpu::Device, queue: &mut wgpu::Queue) -> 
+        wgpu::Buffer {
 
-            // gpu boilerplate
-            let instance = wgpu::Instance::new(wgpu::Backends::all());
-
-            // create which driver and queue
-            let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::default(),
-                    compatible_surface: None,
-                    force_fallback_adapter: false
-                })
-                .await
-                .unwrap();
-            let (device, queue) = adapter
-                .request_device(&Default::default(), None)
-                .await
-                .unwrap();
-
-        // u8 size for buffer 
-        let u8_size = std::mem::size_of::<u8>() as u64;
+        let enc = device.create_command_encoder(
+            &CommandEncoderDescriptor { label: Some("font_atlas_enc") });
 
         // create texture buffer
         let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
-            size: ((size.0 * size.1) as u64 * u8_size) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::MAP_READ
-                | wgpu::BufferUsages::COPY_DST,
-            label: None,
+            size: pixels.len() as u64
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::MAP_READ,
+            label: Some("atlas_buffer"),
             mapped_at_creation: false 
         });
 
- 
-        // start write 
-        for ((_, point), pixels) in glyphs_with_bbox {
-            queue.write_buffer(&atlas_buf,
-                (point.0 * point.1) as u64 * u8_size * pixels.len() as u64,
-                &pixels);
+        
+        // write as group 
+        queue.write_buffer(&atlas_buf, 0, pixels.as_slice()); 
+
+        // submit queue with empty command buffer to write to gpu
+        use std::iter;
+        queue.submit(iter::once(enc.finish()));
+
+        #[cfg(debug_assertions)]
+        println!("buffer submitted returning function...");
+
+        device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(debug_assertions)]
+        println!("buffer complete");
+
+        return atlas_buf;
+    }
+
+    // force pixels into alignment by adding to end
+    fn aligner_start (mut pixels : Vec<u8>, offset: usize) -> Vec<u8> {
+        use std::iter;
+        let mut offset_vec: Vec<u8> = 
+                iter::repeat(0).take(offset).collect();
+        offset_vec.append(&mut pixels);
+        return pixels;
+    } 
+
+    // add whitespace to pixels through pos_boxes
+    fn add_whitespace(pixels : Vec<u8>, pos_boxes : Vec<(BBox, (u64, u64))>) -> Vec<u8> {
+        let mut old_pixels = pixels.clone();
+        // assuming pos_boxes are sorted and aligned with pixels
+        for windows in pos_boxes.windows(2) {
+            let bbox = &windows[0].0; 
+            let pos = windows[0].1;
+            let pixel_end = (bbox.width + pos.0) * (bbox.height * pos.1); 
+            // take the position of the next element
+            let end_pos = windows[1].1.0 * windows[1].1.1; 
+
+            for idx in pixel_end..end_pos {
+                old_pixels.insert(idx as usize, 0); // insert whitespace 
+                                                    // for pixel
+            }
         }
 
-       return atlas_buf;
+        return old_pixels;
+    }
+
+    // force pixels into alignment
+    // puts in whitespace where packer has left it 
+    fn record_align_to_offset (pixels : Vec<u8>, 
+                        pos_boxes : Vec<(BBox, (u64, u64))>) 
+            -> (Vec<u8>, HashMap<char, (Point, u128, Point)>){
+
+        let mut new_pixels: Vec<u8> = vec![0; MAP_ALIGNMENT as usize]; 
+        let mut positions: HashMap<char,
+            (Point, u128, Point)> = HashMap::new();
+
+        for (bbox, pos) in pos_boxes.into_iter() {
+            let mut start = (area_protect(pos.0) * area_protect(pos.1)) as usize;
+            if start == 1 {start = 0;} // get rid of carryover
+
+            let end = (start + (bbox.width * bbox.height) as usize) * CHANNELS as usize;
+            
+            if start < end {
+                let mut glpyh = pixels.get(start..end).unwrap().to_vec();
+
+                let mut offset = 0;
+                // offset of WGPU is 8 here 
+                if !is_multiple_of(glpyh.len() as u128,
+                    COPY_BUFFER_ALIGNMENT as u128) {  
+                    let len = glpyh.len();
+                    let next = self::next_multiple_of(len as u128, COPY_BUFFER_ALIGNMENT as u128);
+
+                    // make offset available to storage buffers 
+                    // overflow checking here
+                    offset = next as isize - len as isize;
+                    glpyh = Self::aligner_start(glpyh, offset as usize);
+                }
+                new_pixels.append(&mut glpyh);
+                positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
+                                offset as u128, (start as u64, end as u64))); 
+            }
+        }
+
+        return (new_pixels, positions);
     }
 
     // creates a new FontAtlas struct
-    pub async fn new(data: String, font_size: f32)
+    pub fn new(term_config: TermConfig, device: &mut wgpu::Device,
+               queue: &mut wgpu::Queue)
         -> Self {
+
+        let data = term_config.font_dir;
+        let font_size = term_config.font_size;
 
         // read font from file and load data into abstraction
         let font_data = std::fs::read(data).unwrap();
         let face = fontdue::Font::from_bytes(font_data.as_slice(), 
-                                         fontdue::FontSettings::default()).unwrap();
-
-        // calculate scale of the font
-        let units_per_em = face.units_per_em();
-        let scale = font_size / units_per_em as f32;
+                                     fontdue::FontSettings::default()).unwrap();
 
         // find raster data and bboxes
-        let mut pixels = Vec::new();
+        let mut pixels : Vec<u8> = Vec::new();
         let mut bboxes = Vec::new();
         for (&glyph_c, &id) in face.chars() {
             // convert id -> u16 
             let (metrics, glyph) = 
-                face.rasterize_indexed_subpixel(id.into(), scale);
+                face.rasterize_indexed_subpixel(id.into(), font_size);
+                        // use px 
+
+            // no alpha channel so we create ours with 0 init
+            let (_, mut rgba) = glyph.into_iter().fold((vec![], vec![]),
+                |(mut pixel, mut state), channel | {
+                if pixel.len() < 3 {
+                    pixel.push(channel);
+                }   
+                else {
+                    pixel.push(0);
+                    state.append(&mut pixel);
+                    pixel.clear();
+                }
+                return (pixel, state);
+            });
 
             // push pixel data 
-            pixels.push(glyph);
-            // push glpyh char with bbox 
+            pixels.append(&mut rgba);
             bboxes.push(BBox { glpyh: glyph_c, 
-                width: metrics.width as u32,
-                height: metrics.height as u32 });
+                width: metrics.width as u64,
+                height: metrics.height as u64 });
         }
 
         // pos_boxes is not in order  
-        let (size, mut pos_boxes) = packer(&mut bboxes);
+        let (size, pos_boxes) = packer(&mut bboxes);
 
-        print!("pos box len: {}", pos_boxes.len());
 
-        // sort by comparing two glpyh positions 
-        pos_boxes.sort_by(|(bbox1,_), (bbox2,_)| 
-                          face.lookup_glyph_index(bbox1.glpyh)
-                          .cmp(&face.lookup_glyph_index(bbox2.glpyh)));
+        // sorting for some reason drops positions
+        // so we aren't going to sort here.
+        pixels = Self::add_whitespace(pixels, pos_boxes.clone());
 
-        let mut atlas_lookup : HashMap<char, (Point, Point)> = HashMap::new();
+        // remove None types
+        let (mut pixels, atlas_lookup) =
+            Self::record_align_to_offset(pixels, pos_boxes);
 
-        for (bbox, point) in pos_boxes.clone() {
-            atlas_lookup.insert(bbox.glpyh, ((bbox.width, bbox.height), point));
-        }
-
-        // zip the pixels with boxes
-        let pos_glpyhs = pos_boxes.into_iter().zip(pixels).collect();
 
         // create atlas texutre set up as image tex
-        let atlas = Self::font_atlas(pos_glpyhs, size).await;
-
-        // flush writes and put in GPU
-        // atlas.unmap();
-
-        return Self{ atlas, lookup : atlas_lookup}
+        let atlas = Self::font_atlas(&mut pixels, device, queue);
+        return Self{atlas, 
+            lookup : atlas_lookup, atlas_size : size}; 
     }
 
     // function to get glpyh data on a single char
     // returns wgpu::BufferSlice ready to be rendered as image data
-    pub fn get_glpyh_data(&self, glpyh: char) -> wgpu::BufferSlice {
+    pub fn get_glpyh_data(&self, glpyh: char) -> 
+        (wgpu::BufferSlice, u128) {
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
-        // x,y coordinates
-        let offset_start = (pos.1.0 * pos.1.1) as u64;
-        // x,y coords plus w, h
-        let offset_end = ((pos.1.0 + pos.0.0) * (pos.1.1 + pos.0.1)) as u64;
-
-        // return glpyh data as slice
-        return self.atlas.slice(offset_start..offset_end); 
+        // return glpyh data as slice and offset
+        return (self.atlas.slice(pos.2.0..pos.2.1), pos.1); 
     }
-}
 
+}

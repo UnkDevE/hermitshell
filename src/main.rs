@@ -1,5 +1,5 @@
 use hermitshell::State;
-use hermitshell::TermConfig;
+use hermitshell::font_atlas::font_atlas::TermConfig;
 
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};
 use winit::{
@@ -12,7 +12,7 @@ use std::io::Read;
 
 fn read_from_pty(reader: &mut Box<dyn Read + Send>) -> String {
     // make buffer the same as a max data of the terminal
-    let mut u8_buf: [u8; (80*24)] = [0; (80*24)];
+    let mut u8_buf: [u8; 80*24] = [0; 80*24];
     reader.read(&mut u8_buf).unwrap();
 
     // convert u8 buffer to string
@@ -60,7 +60,7 @@ pub async fn run(){
     let Some(font_dir) = env::args().nth(1) else {todo!()};
     
     // impl state
-    let mut state = State::new(&window, TermConfig { font_dir, font_size: 18.0}).await;
+    let mut state = State::new(&window, TermConfig {font_dir, font_size: 40.0}).await;
 
     // make buffers
     let mut command_str = read_from_pty(&mut reader);
@@ -108,6 +108,7 @@ pub async fn run(){
                     scratch_buf.clear();
                     // push output to buffer
                     command_str.push_str(read_from_pty(&mut reader).as_str());
+                    state.shell_buf.string_buf.push_str(&command_str);
 
                     #[cfg(debug_assertions)]
                     println!("{}", command_str);

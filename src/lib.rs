@@ -1,9 +1,9 @@
-mod font_atlas;
-
+pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
+use font_atlas::font_atlas::TermConfig;
 
 
-use wgpu::include_wgsl;
+use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
 use winit::{
     event::*,
@@ -57,12 +57,9 @@ pub struct ShellBuf {
     pub string_buf: String,
     pub glpyhs_pos: Vec<wgpu::Buffer>
 }
-pub struct TermConfig{
-    pub font_dir: String,
-    pub font_size: f32
-}
 
 use std::collections::HashMap;
+
 
 pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
     let mut seen: HashMap<char, i32> = HashMap::new();
@@ -77,10 +74,45 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
         }
         return is_in;
     });
-    return (seen, s); } impl State {
-    pub async fn new(window: &Window, term_config : TermConfig) -> Self {
-        let size = window.inner_size();
+    return (seen, s); 
+} 
 
+impl State {
+
+
+    pub async fn new(window: &Window, term_config : TermConfig) -> Self {
+
+        let (surface, mut device, mut queue, config) = 
+            Self::surface_config(window).await;
+
+        // load fontatlas
+        let font_atlas = FontAtlas::new(term_config.clone(), &mut device,
+                                        &mut queue);
+
+
+        let (render_pipeline, glpyh_sampler, glpyh_layout) = 
+            Self::make_render_pipeline(&mut device, &config);
+
+        let glpyhs = Self::make_glpyhs(&mut device, &mut queue, 
+                                       &font_atlas, glpyh_sampler, glpyh_layout).await;
+        // pack into struct
+        return Self {
+                surface,
+                device,
+                queue,
+                config,
+                size: window.inner_size(),
+                render_pipeline,
+                font_atlas,
+                shell_buf: ShellBuf{
+                    string_buf: String::new(), glpyhs_pos: vec![]
+                },
+                glpyhs,
+           };
+    }
+
+    pub async fn surface_config(window: &Window)
+        -> (wgpu::Surface, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::Backends::all());
@@ -97,7 +129,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    label: None,
+                    label: Some("lib adapter"),
                     features: wgpu::Features::empty(),
                     // WebGL doesn't support all of wgpu's features, so if
                     // we're building for the web we'll have to disable some.
@@ -113,6 +145,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             .await
             .unwrap();
 
+        let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration {
             alpha_mode: *surface.get_supported_alpha_modes(&adapter).first().unwrap(),
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -123,11 +156,14 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
         };
         surface.configure(&device, &config);
 
-        let font_atlas = FontAtlas::new(term_config.font_dir,
-                                        term_config.font_size).await;
+        return (surface, device, queue, config);
+    }
 
-        let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
 
+     pub fn make_render_pipeline(device: &mut wgpu::Device, 
+                                 config: &wgpu::SurfaceConfiguration) -> 
+         (RenderPipeline, wgpu::Sampler, wgpu::BindGroupLayout) {
+        
         let glpyh_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -147,7 +183,9 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                         ty: wgpu::BindingType::Texture {
                             multisampled: false,
                             view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            sample_type: wgpu::TextureSampleType::Float { 
+                                filterable: true
+                            },
                         },
                         count: None,
                     },
@@ -156,13 +194,13 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         // This should match the filterable field of the
                         // corresponding Texture entry above.
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        ty: wgpu::BindingType::Sampler(
+                            wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                 ],
                 label: Some("glpyh_bind_group_layout"),
-            });
-
+            }); 
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
         // some boilerplate
@@ -173,14 +211,15 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                 push_constant_ranges: &[],
             }
         );
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
-            },
+        let render_pipeline = 
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Render Pipeline"),
+                layout: Some(&render_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[Vertex::desc()],
+                },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
@@ -198,7 +237,8 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
+                // Setting this to anything other than
+                // Fill requires Features::POLYGON_MODE_LINE
                 // or Features::POLYGON_MODE_POINT
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // Requires Features::DEPTH_CLIP_CONTROL
@@ -217,77 +257,142 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             multiview: None,
         });
 
-       
+        return (render_pipeline, glpyh_sampler, glpyh_layout);
+    }
+
+       pub async fn make_glpyhs(device: &mut wgpu::Device, 
+                                queue: &mut wgpu::Queue, font_atlas: &FontAtlas, 
+                                glpyh_sampler: wgpu::Sampler, glpyh_layout: wgpu::BindGroupLayout) -> 
+        HashMap<char, wgpu::BindGroup> {
+
+        #[cfg(debug_assertions)]
+        println!("make glpyhs has been called");
+
+        let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
+
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
-            
-            let glpyh_slice = font_atlas.get_glpyh_data(*glpyh);                  
+            #[cfg(debug_assertions)]
+            println!("font_atlas lookup glpyh {}", glpyh);
             {
-                // NOTE: We have to create the mapping THEN device.poll() before await
-                // the future. Otherwise the application will freeze.
-                let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-                glpyh_slice.map_async(wgpu::MapMode::Read, move |result| {
-                    tx.send(result).unwrap();
-                });
+                // NOTE: We have to create the mapping 
+                // THEN device.poll() before await
+                let (glpyh_slice, offset) 
+                    = font_atlas.get_glpyh_data(*glpyh);        
+
+                let (sender, receiver) = 
+                    futures_intrusive::channel::shared::oneshot_channel();
+                glpyh_slice.map_async(wgpu::MapMode::Read, 
+                                      move |v| sender.send(v).unwrap());
+
+
+                #[cfg(debug_assertions)]
+                println!("polling device for glpyh {} started", glpyh);
 
                 device.poll(wgpu::Maintain::Wait);
+                if let Some(Ok(())) = receiver.receive().await {
 
-                rx.receive().await.unwrap().unwrap();
-            }
-            // create buf view and lookup bounding box
-            let glpyh_data = glpyh_slice.get_mapped_range();
-            let Some(bbox) = font_atlas.lookup.get(&glpyh) else {panic!("no lookup for glpyh")};
-            
-            let tex = device.create_texture_with_data(&queue, 
-                &wgpu::TextureDescriptor{
-                    label: Some("glpyh_tex"),
-                    size: wgpu::Extent3d{
-                        height: bbox.1.1 as u32, // height
-                        width: bbox.1.0 as u32, // width
-                        depth_or_array_layers: 1 
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Uint,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                }, glpyh_data.as_ref());
+                    #[cfg(debug_assertions)]
+                    println!("found glpyh mapping to texture...");
 
-            // create view for bindgroup
-            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                    // create buf view and lookup bounding box
+                    let glpyh_data = glpyh_slice.get_mapped_range();
+                    let Some(bbox) = font_atlas.lookup.get(&glpyh) else 
+                        {panic!("no lookup for glpyh")};
+                    
+                    let tex_size = wgpu::Extent3d{
+                                height: bbox.0.1 as u32, // height
+                                width: bbox.0.0 as u32, // width
+                                depth_or_array_layers: 1 
+                            };
 
-            // write texture to bindgroup using device.
-            glpyhs.insert(*glpyh, device.create_bind_group(
-                &wgpu::BindGroupDescriptor {
-                    layout: &glpyh_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
+                    let tex = device.create_texture(&wgpu::TextureDescriptor{
+                            label: Some("glpyh_tex"),
+                            size: tex_size,
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                                | wgpu::TextureUsages::TEXTURE_BINDING
+                                | wgpu::TextureUsages::COPY_DST
+                    });
+
+                    // write from buffer
+                    queue.write_texture(
+                        wgpu::ImageCopyTexture{
+                            texture: &tex,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All},
+
+                        &glpyh_data,
+
+                        wgpu::ImageDataLayout{
+                            offset: offset.try_into().unwrap(),
+                            bytes_per_row: 
+                                std::num::NonZeroU32::new(4 * bbox.0.0 as u32),
+                            rows_per_image: 
+                                std::num::NonZeroU32::new(bbox.0.1 as u32),
                         },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&glpyh_sampler),
-                        }
-                    ],
-                    label: Some(&format!("glpyh bindgroup {}", *glpyh))
-                }
-            ));
-        }
+                        tex_size,
+                    );
 
-       // pack into struct
-        Self {
-            surface,
-            device,
-            queue,
-            config,
-            size,
-            render_pipeline,
-            font_atlas,
-            shell_buf: ShellBuf{string_buf: String::new(), glpyhs_pos: vec![]},
-            glpyhs,
-       }
-   }
+                    // create view for bindgroup
+                    let view = tex.create_view(
+                        &wgpu::TextureViewDescriptor::default());
+
+                    // write texture to bindgroup using device.
+                    glpyhs.insert(*glpyh, device.create_bind_group(
+                        &wgpu::BindGroupDescriptor {
+                            layout: &glpyh_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::
+                                        TextureView(&view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::
+                                        Sampler(&glpyh_sampler),
+                                }
+                            ],
+                            label: Some(&format!("glpyh bindgroup {}", *glpyh))
+                        }
+                    ));
+
+                    #[cfg(debug_assertions)]
+                    println!("glpyh {} inserted to hasmap", *glpyh)
+
+                }
+                else {
+                    panic!("timeout for glpyh load");
+                }
+                #[cfg(debug_assertions)]
+                println!("polling device for glpyh {} complete", glpyh);
+            }
+
+
+            // submit queue 
+            let glpyh_buf_enc = 
+                device.create_command_encoder(&CommandEncoderDescriptor{ 
+                    label: Some("glpyh_buf_enc") });
+            queue.submit(iter::once(glpyh_buf_enc.finish()));
+
+            #[cfg(debug_assertions)]
+            println!("starting submitted glpyh queue polling");
+
+            device.poll(wgpu::Maintain::Wait);
+
+            #[cfg(debug_assertions)]
+            println!("finished glpyh queue polling");
+
+            // cleanup
+            font_atlas.atlas.unmap();
+        }
+        return glpyhs;
+    }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
@@ -305,29 +410,40 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
 
     pub fn update(&mut self) {
         // set the position for drawing charecters
-        let mut start = (0,0);
+        let mut start : (f32, f32) = (0.0,0.0);
         for line in self.shell_buf.string_buf.lines(){
             for cbuf_char in line.chars() {
-                let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else {panic!("no bbox")};
+                let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else 
+                    { continue; };    
+
+                let bbox_normalized = 
+                    ((bbox.0.0 / self.config.width as u64) as f32,
+                     (bbox.0.1 / self.config.height as u64) as f32);
                 // add poisition for next char
-                start.0 += bbox.0.0; // set as width
+                start.0 += bbox_normalized.0; // set as width
                 // if start smaller than bbox then set as bbox 
-                if start.1 < bbox.0.1 { start.1 = bbox.0.1; }
+                if start.1 < bbox_normalized.1 { start.1 = bbox_normalized.1}
 
                 // create coords:
                 // start pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[
-                    Vertex { position: [start.0 as f32, start.1 as f32, 0.0], tex_coords: [0.0, 0.0], }, // b lh corner
-                    Vertex { position: [start.0 as f32, (start.1 + bbox.0.1) as f32, 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-                    Vertex { position: [(start.0 + bbox.0.0) as f32,start.1 as f32,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
-                    Vertex { position: [(start.0 + bbox.0.0) as f32,(start.1 + bbox.0.1) as f32,0.0], tex_coords: [1.0,1.0], }, // t rh corner
+                    Vertex { position: [start.0 , start.1, 0.0],
+                    tex_coords: [0.0, 0.0], }, // b lh corner
+                    Vertex { position: [start.0 , (start.1 + bbox_normalized.1)
+                        , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
+                    Vertex { position: [(start.0 + bbox_normalized.0), start.1 
+                        ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+                    Vertex { position: [(start.0 + bbox_normalized.0),
+                    (start.1 + bbox_normalized.1) ,0.0], tex_coords: [1.0,1.0], },
+                    // t rh corner
                 ];
 
                 // create buffer for position
-                let glpyh_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { 
-                    label: Some(&format!("buffer {}", cbuf_char)),
-                    contents: bytemuck::cast_slice(glpyh_vert),
-                    usage: wgpu::BufferUsages::VERTEX,
+                let glpyh_buf = self.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor { 
+                        label: Some(&format!("buffer {}", cbuf_char)),
+                        contents: bytemuck::cast_slice(glpyh_vert),
+                        usage: wgpu::BufferUsages::VERTEX,
                 });
 
                 self.shell_buf.glpyhs_pos.push(glpyh_buf);
@@ -352,6 +468,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
             });
 
         {
+
             let mut render_pass = encoder.begin_render_pass(
                 &wgpu::RenderPassDescriptor {
                     label: Some("Render Pass"),
@@ -363,7 +480,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                                 g: 0.0,
                                 r: 0.0,
                                 b: 0.0,
-                                a: 1.0,
+                                a: 0.0,
                             }),
                             store: true,
                         },
@@ -372,23 +489,33 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
                 });
 
                     
-            render_pass.set_pipeline(&self.render_pipeline);
-            for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
-                let Some(glpyh) = &self.glpyhs.get(&chr)
-                    else {
-                        panic!("glpyh unsupported");
-                    };
-                render_pass.set_bind_group(0, &glpyh, &[]);
-                render_pass.set_vertex_buffer(0, self.shell_buf.glpyhs_pos.get(i).unwrap().slice(..));
-                render_pass.draw(0..4, 0..1);
-            }
-        }
+            if !self.shell_buf.string_buf.is_empty() {
+                render_pass.set_pipeline(&self.render_pipeline);
 
+                #[cfg(debug_assertions)]
+                println!("shellbuf : {}", self.shell_buf.string_buf);
+
+                for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
+                    
+                    #[cfg(debug_assertions)]
+                    println!("chr {} printed to shell", chr);
+                    
+                    if let Some(glpyh) = self.glpyhs.get(&chr) {
+                        render_pass.set_bind_group(0, &glpyh, &[]);
+                        render_pass.set_vertex_buffer(0, 
+                            self.shell_buf.glpyhs_pos.get(i).unwrap().slice(..));
+                        render_pass.draw(0..4, 0..1);
+
+                        #[cfg(debug_assertions)]
+                        println!("pass drawn");
+                    }
+                }
+            }
+
+        }
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
 
         Ok(())
     }
 }
-
-
