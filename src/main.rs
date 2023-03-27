@@ -1,4 +1,6 @@
+#![feature(int_roundings)]
 use hermitshell::State;
+mod font_atlas;
 use hermitshell::font_atlas::font_atlas::TermConfig;
 
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};

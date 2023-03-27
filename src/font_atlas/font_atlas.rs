@@ -25,20 +25,6 @@ fn is_multiple_of(n : u128, multiple: u128) -> bool
     return n&(multiple - 1) == 0;
 }
 
-fn next_multiple_of(n : u128, multiple: u128) -> u128 
-{
-    if !is_multiple_of(n, multiple) {
-        if n.checked_rem(multiple).unwrap_or(0) == 0 {
-            return n;
-        }
-        let frac = n.checked_div(multiple).unwrap_or(0);
-        if frac != 0 {
-            return n * frac;
-        }
-    }
-    return n;
-}
- 
 pub struct FontAtlas {
     pub atlas : wgpu::Buffer,
     // point = (u64, u64) => ((w, h), offset, (x, y))
@@ -58,10 +44,13 @@ impl FontAtlas {
         let enc = device.create_command_encoder(
             &CommandEncoderDescriptor { label: Some("font_atlas_enc") });
 
+        // size conversion error handling next
+        let u64_size = <usize as TryInto::<u64>>::try_into(pixels.len())
+            .unwrap();
+
         // create texture buffer
         let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
-            size: pixels.len() as u64
-                as wgpu::BufferAddress,
+            size: u64_size,
             usage: wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::MAP_READ,
             label: Some("atlas_buffer"),
@@ -127,29 +116,60 @@ impl FontAtlas {
             (Point, u128, Point)> = HashMap::new();
 
         for (bbox, pos) in pos_boxes.into_iter() {
-            let mut start = (area_protect(pos.0) * area_protect(pos.1)) as usize;
+
+            // flatten out position from packer
+            let mut start = (area_protect(pos.0) * area_protect(pos.1) 
+                             * CHANNELS) as usize;
             if start == 1 {start = 0;} // get rid of carryover
 
-            let end = (start + (bbox.width * bbox.height) as usize) * CHANNELS as usize;
+            // find endpoint
+            let mut end =  start + (((bbox.width * bbox.height) 
+                                     * CHANNELS) as usize);
             
-            if start < end {
-                let mut glpyh = pixels.get(start..end).unwrap().to_vec();
+            // if in range
+            if let Some(mut glpyh) = pixels.get(start..end)
+                .and_then(|x| Some(x.to_vec())) {
 
                 let mut offset = 0;
-                // offset of WGPU is 8 here 
-                if !is_multiple_of(glpyh.len() as u128,
-                    COPY_BUFFER_ALIGNMENT as u128) {  
-                    let len = glpyh.len();
-                    let next = self::next_multiple_of(len as u128, COPY_BUFFER_ALIGNMENT as u128);
 
-                    // make offset available to storage buffers 
-                    // overflow checking here
-                    offset = next as isize - len as isize;
+                // this is the inner check for texutres
+                if !is_multiple_of(glpyh.len() as u128,
+                        COPY_BUFFER_ALIGNMENT as u128)  
+                {  
+                    let len = glpyh.len();
+                    end = end.next_multiple_of(COPY_BUFFER_ALIGNMENT as usize);
+
+                    // set end as length aligned
+                    offset = (end - start) - len as usize;
                     glpyh = Self::aligner_start(glpyh, offset as usize);
                 }
-                new_pixels.append(&mut glpyh);
-                positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
-                                offset as u128, (start as u64, end as u64))); 
+
+                // if conversion OK then add to hash
+                if let (Ok(start_u64), Ok(end_u64)) = (start.try_into(),
+                    end.try_into()) {
+
+                    #[cfg(debug_assertions)]
+                    if start == end { panic!("start end the same!"); }
+                    else if is_multiple_of(start as u128,
+                                           MAP_ALIGNMENT as u128) {
+                        panic!("start is misaligned");
+                    }
+                    else if is_multiple_of(end as u128,
+                                           COPY_BUFFER_ALIGNMENT as u128) {
+                        println!("offset {} end {} start {}", 
+                                 offset, end, start);
+                        panic!("end is misaligned");
+                    }
+                    
+                    new_pixels.append(&mut glpyh);
+                    positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
+                                    offset as u128, (start_u64, end_u64))); 
+                }
+                else{
+                    #[cfg(debug_assertions)]
+                    println!("glpyh {}, start {}, end {} couldn't be positioned",
+                            bbox.glpyh, start, end);
+                }
             }
         }
 
@@ -193,10 +213,18 @@ impl FontAtlas {
             });
 
             // push pixel data 
-            pixels.append(&mut rgba);
-            bboxes.push(BBox { glpyh: glyph_c, 
-                width: metrics.width as u64,
-                height: metrics.height as u64 });
+            // null char has problems with encoding
+            if  !(metrics.width == 0 || metrics.height == 0 || glyph_c == '\0') {
+                pixels.append(&mut rgba);
+                bboxes.push(BBox { glpyh: glyph_c, 
+                    width: metrics.width as u64,
+                    height: metrics.height as u64 });
+                
+
+                #[cfg(debug_assertions)]
+                println!("w {} h {} char {}", 
+                         metrics.width, metrics.height, glyph_c)
+            }
         }
 
         // pos_boxes is not in order  
@@ -208,6 +236,14 @@ impl FontAtlas {
         pixels = Self::add_whitespace(pixels, pos_boxes.clone());
 
         // remove None types
+        let pos_boxes = 
+            pos_boxes.into_iter().
+            filter(|(_, pos)| 
+                   area_protect(pos.1) * 
+                   area_protect(pos.0) != 0)
+            .collect();
+
+        // align
         let (mut pixels, atlas_lookup) =
             Self::record_align_to_offset(pixels, pos_boxes);
 
@@ -225,6 +261,9 @@ impl FontAtlas {
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
         // return glpyh data as slice and offset
+        #[cfg(debug_assertions)]
+        println!("offsets start {} end {} width {} height {} offset {}", 
+            pos.2.0, pos.2.1, pos.0.0, pos.0.1, pos.1);
         return (self.atlas.slice(pos.2.0..pos.2.1), pos.1); 
     }
 

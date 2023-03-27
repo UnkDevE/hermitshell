@@ -405,21 +405,18 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     let mut xlines: Vec<Line> = xlines_start.clone();
 
     // we skip second step of algo to allow for the mod
-
-    // remove empties
-    let mut boxes : Vec<BBox> = bboxes.to_owned().into_iter().
-        filter(|bbox| bbox.width * bbox.height != 0).collect();
-
+    let mut boxes : Vec<BBox> = bboxes.to_owned();
     // third step sort boxes in decreasing order
     sort_bboxes(&mut boxes);
-
+    
     // we reverse the list to create queue
     boxes.reverse();
+
 
     let mut placements: Vec<Placement> = Vec::new();
 
     // forth step select rect
-    for rect in boxes {
+    for rect in boxes.clone() {
         let mut pos :Option<(u64, u64)> = None;
 
         while pos == None { 
@@ -461,6 +458,7 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
 
     // if space len == 1 still returns
     // remove line data to return as unused
+    #[cfg(debug_assertions)]
     print!("size predicted {} len {}", 
            xlines[0][1] as u64 * xlines.last().unwrap()[3] as u64,
            xlines.len());
