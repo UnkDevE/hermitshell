@@ -115,6 +115,7 @@ impl FontAtlas {
         let mut positions: HashMap<char,
             (Point, u128, Point)> = HashMap::new();
 
+        let last_glpyh = '\0';
         for (bbox, pos) in pos_boxes.into_iter() {
 
             // flatten out position from packer
@@ -125,22 +126,39 @@ impl FontAtlas {
             // find endpoint
             let mut end =  start + (((bbox.width * bbox.height) 
                                      * CHANNELS) as usize);
-            
+
             // if in range
             if let Some(mut glpyh) = pixels.get(start..end)
                 .and_then(|x| Some(x.to_vec())) {
 
-                let mut offset = 0;
+                // start check to alginment
+                if !is_multiple_of(start as u128, MAP_ALIGNMENT.into()) {
+                    let padding = start.next_multiple_of(MAP_ALIGNMENT as usize);
+                    if last_glpyh != '\0' {
+                        positions.get_mut(&last_glpyh).and_then(|bbox| {
+                            bbox.1 += (padding as u64 - bbox.2.1) as u128; 
+                            return Some(bbox);
+                        });
+                    } 
+                    // set start to the next MAP_ALIGNMENT
+                    start = padding;
+                }
+
+                let mut offset : isize = 0;
+                let len = glpyh.len();
 
                 // this is the inner check for texutres
-                if !is_multiple_of(glpyh.len() as u128,
-                        COPY_BUFFER_ALIGNMENT as u128)  
+                if !is_multiple_of(end as u128,
+                        COPY_BUFFER_ALIGNMENT.into()) || 
+                    !is_multiple_of(len as u128, COPY_BUFFER_ALIGNMENT.into())
                 {  
-                    let len = glpyh.len();
                     end = end.next_multiple_of(COPY_BUFFER_ALIGNMENT as usize);
 
                     // set end as length aligned
-                    offset = (end - start) - len as usize;
+                    match TryInto::<isize>::try_into((end - start) - len) { 
+                        Ok(offset) => offset,
+                        Err(..) => panic!("conversion failure"),
+                    };
                     glpyh = Self::aligner_start(glpyh, offset as usize);
                 }
 
@@ -150,11 +168,14 @@ impl FontAtlas {
 
                     #[cfg(debug_assertions)]
                     if start == end { panic!("start end the same!"); }
-                    else if is_multiple_of(start as u128,
+                    else if !is_multiple_of(start as u128,
                                            MAP_ALIGNMENT as u128) {
+                        println!("offset {} end {} start {}", 
+                                 offset, end, start);
+ 
                         panic!("start is misaligned");
                     }
-                    else if is_multiple_of(end as u128,
+                    else if !is_multiple_of(end as u128,
                                            COPY_BUFFER_ALIGNMENT as u128) {
                         println!("offset {} end {} start {}", 
                                  offset, end, start);

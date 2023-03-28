@@ -1,7 +1,7 @@
+#![feature(int_roundings)]
 pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
-
 
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
@@ -303,7 +303,7 @@ impl State {
                     let tex_size = wgpu::Extent3d{
                                 height: bbox.0.1 as u32, // height
                                 width: bbox.0.0 as u32, // width
-                                depth_or_array_layers: 1 
+                                depth_or_array_layers: 1
                             };
 
                     let tex = device.create_texture(&wgpu::TextureDescriptor{
@@ -331,7 +331,7 @@ impl State {
                         wgpu::ImageDataLayout{
                             offset: offset.try_into().unwrap(),
                             bytes_per_row: 
-                                std::num::NonZeroU32::new(4 * bbox.0.0 as u32),
+                                std::num::NonZeroU32::new((4 * bbox.0.0) as u32),
                             rows_per_image: 
                                 std::num::NonZeroU32::new(bbox.0.1 as u32),
                         },
