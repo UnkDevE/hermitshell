@@ -136,16 +136,22 @@ impl FontAtlas {
                     let padding = start.next_multiple_of(MAP_ALIGNMENT as usize);
                     if last_glpyh != '\0' {
                         positions.get_mut(&last_glpyh).and_then(|bbox| {
-                            bbox.1 += (padding as u64 - bbox.2.1) as u128; 
+                            bbox.1 += (padding as i64 - bbox.2.1 as i64)
+                                .abs() as u128; 
+                            bbox.2.1 = padding as u64;
                             return Some(bbox);
                         });
                     } 
                     // set start to the next MAP_ALIGNMENT
+                    // recalc end for finding start.
                     start = padding;
+                    end =  start + (((bbox.width * bbox.height) 
+                    * CHANNELS) as usize);
                 }
 
-                let mut offset : isize = 0;
                 let len = glpyh.len();
+                let mut offset : isize = (end - start) as isize - len as isize;
+                offset = offset.abs();
 
                 // this is the inner check for texutres
                 if !is_multiple_of(end as u128,
@@ -154,11 +160,9 @@ impl FontAtlas {
                 {  
                     end = end.next_multiple_of(COPY_BUFFER_ALIGNMENT as usize);
 
-                    // set end as length aligned
-                    match TryInto::<isize>::try_into((end - start) - len) { 
-                        Ok(offset) => offset,
-                        Err(..) => panic!("conversion failure"),
-                    };
+                    // set end as length aligned just update.
+                    offset = (end - start) as isize - len as isize;
+                    offset = offset.abs();
                     glpyh = Self::aligner_start(glpyh, offset as usize);
                 }
 
@@ -182,6 +186,19 @@ impl FontAtlas {
                         panic!("end is misaligned");
                     }
                     
+                    // if too short pad
+                    if end - start !=
+                        (bbox.width * bbox.height * CHANNELS) as usize {
+                        let pad : isize = (end - start) as isize - 
+                            ((bbox.width * bbox.height * CHANNELS)
+                                as isize);
+                        let pad: usize = pad.abs() as usize; // set padding to N. 
+                        glpyh = Self::aligner_start(glpyh, pad);
+                        offset += pad as isize;
+                        end += pad;
+                    } 
+
+
                     new_pixels.append(&mut glpyh);
                     positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
                                     offset as u128, (start_u64, end_u64))); 
