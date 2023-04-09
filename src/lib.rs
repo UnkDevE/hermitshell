@@ -417,8 +417,8 @@ impl State {
                     { continue; };    
 
                 let bbox_normalized = 
-                    ((bbox.0.0 / self.config.width as u64) as f32,
-                     (bbox.0.1 / self.config.height as u64) as f32);
+                    ((bbox.0.0 as f64 / self.config.width as f64) as f32,
+                     (bbox.0.1 as f64 / self.config.height as f64) as f32);
                 // add poisition for next char
                 start.0 += bbox_normalized.0; // set as width
                 // if start smaller than bbox then set as bbox 
@@ -477,17 +477,16 @@ impl State {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                g: 0.0,
-                                r: 0.0,
-                                b: 0.0,
-                                a: 0.0,
+                                g: 1.0,
+                                r: 1.0,
+                                b: 1.0,
+                                a: 1.0,
                             }),
                             store: true,
                         },
                     })],
                     depth_stencil_attachment: None,
                 });
-
                     
             if !self.shell_buf.string_buf.is_empty() {
                 render_pass.set_pipeline(&self.render_pipeline);
@@ -497,17 +496,18 @@ impl State {
 
                 for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
                     
-                    #[cfg(debug_assertions)]
-                    println!("chr {} printed to shell", chr);
-                    
-                    if let Some(glpyh) = self.glpyhs.get(&chr) {
-                        render_pass.set_bind_group(0, &glpyh, &[]);
-                        render_pass.set_vertex_buffer(0, 
-                            self.shell_buf.glpyhs_pos.get(i).unwrap().slice(..));
-                        render_pass.draw(0..4, 0..1);
-
-                        #[cfg(debug_assertions)]
-                        println!("pass drawn");
+                    // #[cfg(debug_assertions)]
+                    // println!("chr {} printed to shell", chr);
+                    if chr != ' ' {
+                        if let Some(glpyh) = self.glpyhs.get(&chr) {
+                            if let Some(pixels) = 
+                                self.shell_buf.glpyhs_pos.get(i) {
+                                render_pass.set_bind_group(0, &glpyh, &[]);
+                                render_pass.set_vertex_buffer(0, 
+                                                              pixels.slice(..));
+                                render_pass.draw(0..4, 0..1);
+                            }
+                        }
                     }
                 }
             }

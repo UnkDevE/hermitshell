@@ -62,7 +62,7 @@ pub async fn run(){
     let Some(font_dir) = env::args().nth(1) else {todo!()};
     
     // impl state
-    let mut state = State::new(&window, TermConfig {font_dir, font_size: 40.0}).await;
+    let mut state = State::new(&window, TermConfig {font_dir, font_size: 18.0}).await;
 
     // make buffers
     let mut command_str = read_from_pty(&mut reader);
@@ -91,8 +91,8 @@ pub async fn run(){
                     ..},
                 ..} => {
                     // pop used to remove last char not for output
-                    scratch_buf.pop();
-                    state.shell_buf.string_buf.pop();
+                    scratch_buf.pop().unwrap();
+                    state.shell_buf.string_buf.pop().unwrap();
                     window.request_redraw();
                 }
             WindowEvent::KeyboardInput {

@@ -37,7 +37,7 @@ impl PartialEq for BBox {
  *  fifth is wether line is occupied,
  *      1 => not occupied, -1 => fully occupied.
  */
-type Line = [i16; 5];
+type Line = [i64; 5];
 
 // gets the minumum size given the maximum bbox
 fn get_min_size(bboxes: Vec<BBox>) -> Point {
@@ -118,7 +118,7 @@ fn search_lines(rect: BBox, xlines: &mut Vec<Line>,
         // if full
         if width > line[2] as u64 {xlines[n][4] = -1;}
         else if line[4] != -1 { // if not
-            xlines[n][0] = width as i16;
+            xlines[n][0] = width as i64;
             if rect.width <= (line[1] - line[0]).abs() as u64 
                 && rect.height <= area_protect_abs(line[2]) as u64 {
                 // selected the smallest line for the rectangle due to sort
@@ -203,8 +203,8 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
             pos: new_pos,
             line_idx
         });
-        xlines[line_idx][0] = new_pos.0 as i16;
-        xlines[line_idx][2] = new_pos.1 as i16;
+        xlines[line_idx][0] = new_pos.0 as i64;
+        xlines[line_idx][2] = new_pos.1 as i64;
         return Some(new_pos);
     }
 
@@ -399,8 +399,8 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     // first step init qual
     // add to line the width of all rects
     let min_size = get_min_size(bboxes.clone());
-    let xlines_start: Vec<Line> = vec![[0, min_size.0 as i16, 0,
-                                        min_size.1 as i16, 1]];
+    let xlines_start: Vec<Line> = vec![[0, min_size.0 as i64, 0,
+                                        min_size.1 as i64, 1]];
 
     let mut xlines: Vec<Line> = xlines_start.clone();
 

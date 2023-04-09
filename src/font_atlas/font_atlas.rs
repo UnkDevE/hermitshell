@@ -243,7 +243,7 @@ impl FontAtlas {
                     pixel.push(channel);
                 }   
                 else {
-                    pixel.push(0);
+                    pixel.push(255);
                     state.append(&mut pixel);
                     pixel.clear();
                 }
