@@ -4,6 +4,7 @@ use crate::font_atlas::packer::BBox;
 use crate::font_atlas::packer::area_protect;
 
 use std::collections::HashMap;
+use num::integer::Roots;
 use wgpu::CommandEncoderDescriptor;
 use wgpu::MAP_ALIGNMENT;
 use wgpu::COPY_BUFFER_ALIGNMENT;
@@ -38,7 +39,7 @@ impl FontAtlas {
     // and positions of where those glpyhs are using a wpu::Buffer
     // device is locked so need reference
     fn font_atlas(pixels: &mut Vec<u8>, 
-                  device: &mut wgpu::Device, queue: &mut wgpu::Queue) -> 
+                  device: &mut wgpu::Device, queue: &mut wgpu::Queue, size: (u64, u64)) -> 
         wgpu::Buffer {
 
         let enc = device.create_command_encoder(
@@ -54,24 +55,32 @@ impl FontAtlas {
             usage: wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::MAP_READ,
             label: Some("atlas_buffer"),
-            mapped_at_creation: false 
+            mapped_at_creation: true 
         });
 
         
         // write as group 
-        queue.write_buffer(&atlas_buf, 0, pixels.as_slice()); 
+        queue.write_buffer(&atlas_buf, 0, pixels.as_slice().clone()); 
 
         // submit queue with empty command buffer to write to gpu
         use std::iter;
         queue.submit(iter::once(enc.finish()));
 
         #[cfg(debug_assertions)]
-        println!("buffer submitted returning function...");
+        {
+            println!("buffer submitted returning function...");
+            use image::{ImageBuffer, Rgba}; 
+            image::save_buffer("fontmap.png", &pixels[0..57600], 
+                120, 120 // work out sizes here 
+                   , image::ColorType::Rgba8).unwrap();
+        }
 
         device.poll(wgpu::Maintain::Wait);
 
         #[cfg(debug_assertions)]
         println!("buffer complete");
+
+        atlas_buf.unmap();
 
         return atlas_buf;
     }
@@ -287,7 +296,7 @@ impl FontAtlas {
 
 
         // create atlas texutre set up as image tex
-        let atlas = Self::font_atlas(&mut pixels, device, queue);
+        let atlas = Self::font_atlas(&mut pixels, device, queue, size);
         return Self{atlas, 
             lookup : atlas_lookup, atlas_size : size}; 
     }
@@ -304,5 +313,4 @@ impl FontAtlas {
             pos.2.0, pos.2.1, pos.0.0, pos.0.1, pos.1);
         return (self.atlas.slice(pos.2.0..pos.2.1), pos.1); 
     }
-
 }

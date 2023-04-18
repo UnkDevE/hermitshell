@@ -307,7 +307,7 @@ impl State {
                             };
 
                     let tex = device.create_texture(&wgpu::TextureDescriptor{
-                            label: Some("glpyh_tex"),
+                            label: Some(&format!("glpyh_tex {}", glpyh)),
                             size: tex_size,
                             mip_level_count: 1,
                             sample_count: 1,
@@ -388,8 +388,9 @@ impl State {
             #[cfg(debug_assertions)]
             println!("finished glpyh queue polling");
 
-            // cleanup
-            font_atlas.atlas.unmap();
+            // clean up
+            font_atlas.atlas.unmap(); 
+
         }
         return glpyhs;
     }
@@ -447,7 +448,6 @@ impl State {
                 });
 
                 self.shell_buf.glpyhs_pos.push(glpyh_buf);
-
             }
 
             // move down by height 
