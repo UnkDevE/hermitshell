@@ -1,3 +1,4 @@
+#![feature(iter_intersperse)]
 #![feature(int_roundings)]
 use hermitshell::State;
 mod font_atlas;

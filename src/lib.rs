@@ -1,4 +1,5 @@
 #![feature(int_roundings)]
+#![feature(iter_intersperse)]
 pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
@@ -318,6 +319,7 @@ impl State {
                                 | wgpu::TextureUsages::COPY_DST
                     });
 
+                    
                     // write from buffer
                     queue.write_texture(
                         wgpu::ImageCopyTexture{
@@ -339,8 +341,17 @@ impl State {
                     );
 
                     // create view for bindgroup
-                    let view = tex.create_view(
-                        &wgpu::TextureViewDescriptor::default());
+                    let view = tex.create_view(&wgpu::TextureViewDescriptor { 
+                        label: Some(&format!("tex view {}", glpyh)), 
+                        format: Some(wgpu::TextureFormat::Rgba8UnormSrgb), 
+                        dimension: Some(wgpu::TextureViewDimension::D2), 
+                        aspect: wgpu::TextureAspect::All, 
+                        base_mip_level: 0, 
+                        mip_level_count: None, 
+                        base_array_layer: 0, 
+                        array_layer_count: None 
+                    });
+
 
                     // write texture to bindgroup using device.
                     glpyhs.insert(*glpyh, device.create_bind_group(
@@ -363,8 +374,20 @@ impl State {
                     ));
 
                     #[cfg(debug_assertions)]
-                    println!("glpyh {} inserted to hasmap", *glpyh)
+                    println!("glpyh {} inserted to hashmap", *glpyh);
 
+                    #[cfg(debug_assertions)]
+                    {
+                        // save texture as image
+                        use image::{ImageBuffer, Rgba};
+                        let buffer =
+                            ImageBuffer::<Rgba<u8>, _>::from_raw(bbox.0.0 as u32, 
+                                                                 bbox.0.1 as u32, glpyh_data).unwrap();
+                        buffer.save(format!("glpyh_{}.png", glpyh)).unwrap_or({});
+
+                    }
+
+ 
                 }
                 else {
                     panic!("timeout for glpyh load");
@@ -477,9 +500,9 @@ impl State {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                g: 1.0,
-                                r: 1.0,
-                                b: 1.0,
+                                g: 0.0,
+                                r: 0.0,
+                                b: 0.0,
                                 a: 1.0,
                             }),
                             store: true,

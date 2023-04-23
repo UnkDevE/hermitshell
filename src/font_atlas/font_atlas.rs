@@ -4,7 +4,6 @@ use crate::font_atlas::packer::BBox;
 use crate::font_atlas::packer::area_protect;
 
 use std::collections::HashMap;
-use num::integer::Roots;
 use wgpu::CommandEncoderDescriptor;
 use wgpu::MAP_ALIGNMENT;
 use wgpu::COPY_BUFFER_ALIGNMENT;
@@ -60,7 +59,7 @@ impl FontAtlas {
 
         
         // write as group 
-        queue.write_buffer(&atlas_buf, 0, pixels.as_slice().clone()); 
+        queue.write_buffer(&atlas_buf, 0, pixels.clone().as_slice()); 
 
         // submit queue with empty command buffer to write to gpu
         use std::iter;
@@ -70,9 +69,11 @@ impl FontAtlas {
         {
             println!("buffer submitted returning function...");
             use image::{ImageBuffer, Rgba}; 
-            image::save_buffer("fontmap.png", &pixels[0..57600], 
-                120, 120 // work out sizes here 
-                   , image::ColorType::Rgba8).unwrap();
+            for i in num::range(0, pixels.len().div_floor(57600)) {
+                image::save_buffer(format!("fontmap_{}.png", i), &pixels[57600 * i..(i+1)* 57600], 
+                    120, 120 // work out sizes here 
+                       , image::ColorType::Rgba8).unwrap();
+            }
         }
 
         device.poll(wgpu::Maintain::Wait);
@@ -245,19 +246,28 @@ impl FontAtlas {
                 face.rasterize_indexed_subpixel(id.into(), font_size);
                         // use px 
 
-            // no alpha channel so we create ours with 0 init
-            let (_, mut rgba) = glyph.into_iter().fold((vec![], vec![]),
-                |(mut pixel, mut state), channel | {
-                if pixel.len() < 3 {
-                    pixel.push(channel);
-                }   
-                else {
-                    pixel.push(255);
-                    state.append(&mut pixel);
-                    pixel.clear();
-                }
-                return (pixel, state);
-            });
+            #[cfg(debug_assertions)]
+            {
+                image::save_buffer_with_format(format!("pure_glpyh_{}.png", glyph_c), 
+                                               &(glyph.clone()), metrics.width as u32, metrics.height as u32, 
+                                               image::ColorType::Rgb8, image::ImageFormat::Png);
+            }
+
+            // no alpha channel so we create ours with 255 init
+            let mut rgba = Vec::new();
+            for channels in glyph.chunks(3) {
+                let mut pixel = Vec::from(channels);
+                pixel.push(255); // alpha
+                rgba.append(&mut pixel);
+            }
+
+            #[cfg(debug_assertions)]
+            {
+                println!("rgba len {}", rgba.len());
+                image::save_buffer_with_format(format!("alpha_glpyh_{}.png", glyph_c), 
+                                               &rgba.clone(), metrics.width as u32, metrics.height as u32, 
+                                               image::ColorType::Rgba8, image::ImageFormat::Png);
+            }
 
             // push pixel data 
             // null char has problems with encoding
