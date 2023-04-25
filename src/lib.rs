@@ -4,6 +4,7 @@ pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
 
+use image::RgbaImage;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
 use winit::{
@@ -317,9 +318,10 @@ impl State {
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                                 | wgpu::TextureUsages::TEXTURE_BINDING
                                 | wgpu::TextureUsages::COPY_DST
+                                | wgpu::TextureUsages::COPY_SRC
                     });
 
-                    
+                    let u32_size = std::mem::size_of::<u32>() as u32;
                     // write from buffer
                     queue.write_texture(
                         wgpu::ImageCopyTexture{
@@ -333,7 +335,7 @@ impl State {
                         wgpu::ImageDataLayout{
                             offset: offset.try_into().unwrap(),
                             bytes_per_row: 
-                                std::num::NonZeroU32::new((4 * bbox.0.0) as u32),
+                                std::num::NonZeroU32::new(u32_size * (bbox.0.0 as u32)),
                             rows_per_image: 
                                 std::num::NonZeroU32::new(bbox.0.1 as u32),
                         },
@@ -352,6 +354,11 @@ impl State {
                         array_layer_count: None 
                     });
 
+                    // submit queue 
+                    let glpyh_buf_enc = 
+                        device.create_command_encoder(&CommandEncoderDescriptor{ 
+                            label: Some("glpyh_buf_enc") });
+                    queue.submit(iter::once(glpyh_buf_enc.finish()));
 
                     // write texture to bindgroup using device.
                     glpyhs.insert(*glpyh, device.create_bind_group(
@@ -374,20 +381,55 @@ impl State {
                     ));
 
                     #[cfg(debug_assertions)]
-                    println!("glpyh {} inserted to hashmap", *glpyh);
-
-                    #[cfg(debug_assertions)]
                     {
+                        let output_buffer_size = (u32_size * (bbox.0.0 * bbox.0.1) as u32) as wgpu::BufferAddress;
+
+                        let out_desc = wgpu::BufferDescriptor {
+                            size: output_buffer_size,
+                            usage: wgpu::BufferUsages::COPY_DST
+                                // this tells wpgu that we want to read this buffer from the cpu
+                                | wgpu::BufferUsages::MAP_READ,
+                            label: None,
+                            mapped_at_creation: false,
+                        };
+
+                        // create a new buffer
+                        let out = device.create_buffer(&out_desc);
+
+                        let mut glpyh_dbg_enc = 
+                            device.create_command_encoder(&CommandEncoderDescriptor{ 
+                                label: Some("glpyh_dbg_enc") });
+                   
+                        
                         // save texture as image
-                        use image::{ImageBuffer, Rgba};
-                        let buffer =
-                            ImageBuffer::<Rgba<u8>, _>::from_raw(bbox.0.0 as u32, 
-                                                                 bbox.0.1 as u32, glpyh_data).unwrap();
-                        buffer.save(format!("glpyh_{}.png", glpyh)).unwrap_or({});
+                        glpyh_dbg_enc.copy_texture_to_buffer(
+                            wgpu::ImageCopyTexture {
+                                aspect: wgpu::TextureAspect::All,
+                                texture: &tex,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                            },
+                            wgpu::ImageCopyBuffer {
+                                buffer: &out,
+                                layout: wgpu::ImageDataLayout {
+                                    offset: offset as u64,
+                                    bytes_per_row: 
+                                        std::num::NonZeroU32::new(u32_size * (bbox.0.0 as u32)),
+                                    rows_per_image: 
+                                        std::num::NonZeroU32::new(bbox.0.1 as u32),
+                                },
+                            },
+                            tex_size,
+                        );
+
+                        let tex_data = out.slice(..).get_mapped_range();
+                        image::save_buffer_with_format(format!("glpyh_{}.png", glpyh), &tex_data, bbox.0.0 as u32,
+                                bbox.0.1 as u32, image::ColorType::Rgba8, image::ImageFormat::Png).unwrap_or({});
 
                     }
 
- 
+                    #[cfg(debug_assertions)]
+                    println!("glpyh {} inserted to hashmap", *glpyh);
                 }
                 else {
                     panic!("timeout for glpyh load");
@@ -395,13 +437,6 @@ impl State {
                 #[cfg(debug_assertions)]
                 println!("polling device for glpyh {} complete", glpyh);
             }
-
-
-            // submit queue 
-            let glpyh_buf_enc = 
-                device.create_command_encoder(&CommandEncoderDescriptor{ 
-                    label: Some("glpyh_buf_enc") });
-            queue.submit(iter::once(glpyh_buf_enc.finish()));
 
             #[cfg(debug_assertions)]
             println!("starting submitted glpyh queue polling");
