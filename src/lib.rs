@@ -61,6 +61,7 @@ pub struct ShellBuf {
 }
 
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 
 
 pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
@@ -336,8 +337,7 @@ impl State {
                             offset: offset.try_into().unwrap(),
                             bytes_per_row: 
                                 std::num::NonZeroU32::new(u32_size * (bbox.0.0 as u32)),
-                            rows_per_image: 
-                                std::num::NonZeroU32::new(bbox.0.1 as u32),
+                            rows_per_image: None
                         },
                         tex_size,
                     );
@@ -382,7 +382,10 @@ impl State {
 
                     #[cfg(debug_assertions)]
                     {
-                        let output_buffer_size = (u32_size * (bbox.0.0 * bbox.0.1) as u32) as wgpu::BufferAddress;
+                        let image_size = (u32_size * bbox.0.0 as u32) *
+                                bbox.0.1 as u32 * 4;
+
+                        let output_buffer_size : u64 = image_size.next_multiple_of(256).into();
 
                         let out_desc = wgpu::BufferDescriptor {
                             size: output_buffer_size,
@@ -390,7 +393,7 @@ impl State {
                                 // this tells wpgu that we want to read this buffer from the cpu
                                 | wgpu::BufferUsages::MAP_READ,
                             label: None,
-                            mapped_at_creation: false,
+                            mapped_at_creation: true,
                         };
 
                         // create a new buffer
@@ -412,17 +415,15 @@ impl State {
                             wgpu::ImageCopyBuffer {
                                 buffer: &out,
                                 layout: wgpu::ImageDataLayout {
-                                    offset: offset as u64,
-                                    bytes_per_row: 
-                                        std::num::NonZeroU32::new(u32_size * (bbox.0.0 as u32)),
-                                    rows_per_image: 
-                                        std::num::NonZeroU32::new(bbox.0.1 as u32),
+                                    offset: 0,
+                                    bytes_per_row: NonZeroU32::new(output_buffer_size as u32),
+                                    rows_per_image: None 
                                 },
                             },
                             tex_size,
                         );
 
-                        let tex_data = out.slice(..).get_mapped_range();
+                        let tex_data = out.slice(0..(image_size as u64)).get_mapped_range();
                         image::save_buffer_with_format(format!("glpyh_{}.png", glpyh), &tex_data, bbox.0.0 as u32,
                                 bbox.0.1 as u32, image::ColorType::Rgba8, image::ImageFormat::Png).unwrap_or({});
 
