@@ -337,7 +337,7 @@ impl State {
                             offset: offset.try_into().unwrap(),
                             bytes_per_row: 
                                 std::num::NonZeroU32::new(u32_size * (bbox.0.0 as u32)),
-                            rows_per_image: None
+                            rows_per_image: NonZeroU32::new(bbox.0.1 as u32)
                         },
                         tex_size,
                     );
@@ -382,10 +382,10 @@ impl State {
 
                     #[cfg(debug_assertions)]
                     {
-                        let image_size = (u32_size * bbox.0.0 as u32) *
-                                bbox.0.1 as u32 * 4;
+                        let image_row = (u32_size * bbox.0.0 as u32);
+                        let image_size = image_row * bbox.0.1 as u32;
 
-                        let output_buffer_size : u64 = image_size.next_multiple_of(256).into();
+                        let output_buffer_size : u64 = image_size.next_multiple_of(256) as u64 * bbox.0.1;
 
                         let out_desc = wgpu::BufferDescriptor {
                             size: output_buffer_size,
@@ -415,15 +415,16 @@ impl State {
                             wgpu::ImageCopyBuffer {
                                 buffer: &out,
                                 layout: wgpu::ImageDataLayout {
-                                    offset: 0,
-                                    bytes_per_row: NonZeroU32::new(output_buffer_size as u32),
-                                    rows_per_image: None 
+                                    bytes_per_row: 
+                                        std::num::NonZeroU32::new(image_row.next_multiple_of(256)),
+                                    offset: offset as u64,
+                                    rows_per_image: NonZeroU32::new(bbox.0.1 as u32)
                                 },
                             },
                             tex_size,
                         );
 
-                        let tex_data = out.slice(0..(image_size as u64)).get_mapped_range();
+                        let tex_data = out.slice((offset as u64)..(image_size as u64)).get_mapped_range();
                         image::save_buffer_with_format(format!("glpyh_{}.png", glpyh), &tex_data, bbox.0.0 as u32,
                                 bbox.0.1 as u32, image::ColorType::Rgba8, image::ImageFormat::Png).unwrap_or({});
 

@@ -69,11 +69,8 @@ impl FontAtlas {
         {
             println!("buffer submitted returning function...");
             use image::{ImageBuffer, Rgba}; 
-            for i in num::range(0, pixels.len().div_floor(57600)) {
-                image::save_buffer(format!("fontmap_{}.png", i), &pixels[57600 * i..(i+1)* 57600], 
-                    120, 120 // work out sizes here 
-                       , image::ColorType::Rgba8).unwrap();
-            }
+            image::save_buffer("fontmap.png", pixels.clone().as_slice(), 
+                               (size.0 / 4) as u32, size.1 as u32, image::ColorType::Rgba8);
         }
 
         device.poll(wgpu::Maintain::Wait);

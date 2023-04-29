@@ -40,10 +40,15 @@ impl PartialEq for BBox {
 type Line = [i64; 5];
 
 // gets the minumum size given the maximum bbox
+// this only works diagonal so 
 fn get_min_size(bboxes: Vec<BBox>) -> Point {
     return bboxes.clone().into_iter().fold((0, 0), |mut acc, bbox| {
-        acc.0 += bbox.width;
-        acc.1 += bbox.height;
+        if acc.0 < bbox.width {
+            acc.0 += bbox.width;
+        }
+        else if acc.1 < bbox.height {
+            acc.1 += bbox.height;
+        }
         return acc;
     });
 }
@@ -187,7 +192,7 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
     // search placements in line
     let new_pos = placements.clone()
         .into_iter()
-        .filter(|place| xlines[place.line_idx] == line)
+        .filter(|place| xlines[place.line_idx - 1] == line)
         .fold((line[0] as u64 + rect.width, line[2] as u64), |mut acc, place| {
             // check if there is a leftmost point already stored
             if acc.0 < place.pos.0 {
@@ -459,11 +464,13 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     // if space len == 1 still returns
     // remove line data to return as unused
     #[cfg(debug_assertions)]
-    print!("size predicted {} len {}", 
-           xlines[0][1] as u64 * xlines.last().unwrap()[3] as u64,
-           xlines.len());
+    print!("size predicted {} len {} min_size {}", 
+           (xlines[0][1] as u64 * (xlines[0][3] + 
+              (xlines.last().unwrap_or(&xlines[0])[1])) as u64),
+           xlines.len(), min_size.0 * min_size.1);
     return (
-           (xlines[0][1] as u64, xlines.last().unwrap()[3] as u64),
+        (xlines[0][1] as u64, 
+         (xlines[0][3] + (xlines.last().unwrap_or(&xlines[0])[1])) as u64),
             placements.into_iter()
                 .map(|place| ((place.bbox, place.pos)))
                 .collect()
