@@ -81,8 +81,6 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
 } 
 
 impl State {
-
-
     pub async fn new(window: &Window, term_config : TermConfig) -> Self {
 
         let (surface, mut device, mut queue, config) = 
@@ -114,56 +112,7 @@ impl State {
            };
     }
 
-    pub async fn surface_config(window: &Window)
-        -> (wgpu::Surface, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
-        // The instance is a handle to our GPU
-        // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
-        let surface = unsafe { instance.create_surface(&window) };
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("lib adapter"),
-                    features: wgpu::Features::empty(),
-                    // WebGL doesn't support all of wgpu's features, so if
-                    // we're building for the web we'll have to disable some.
-                    limits: if cfg!(target_arch = "wasm32") {
-                        wgpu::Limits::downlevel_webgl2_defaults()
-                    } else {
-                        wgpu::Limits::default()
-                    },
-                },
-                // Some(&std::path::Path::new("trace")), // Trace path
-                None,
-            )
-            .await
-            .unwrap();
-
-        let size = window.inner_size();
-        let config = wgpu::SurfaceConfiguration {
-            alpha_mode: *surface.get_supported_alpha_modes(&adapter).first().unwrap(),
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: *surface.get_supported_formats(&adapter).first().unwrap(),
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
-        };
-        surface.configure(&device, &config);
-
-        return (surface, device, queue, config);
-    }
-
-
-     pub fn make_render_pipeline(device: &mut wgpu::Device, 
+    pub fn make_render_pipeline(device: &mut wgpu::Device, 
                                  config: &wgpu::SurfaceConfiguration) -> 
          (RenderPipeline, wgpu::Sampler, wgpu::BindGroupLayout) {
         
@@ -262,6 +211,56 @@ impl State {
 
         return (render_pipeline, glpyh_sampler, glpyh_layout);
     }
+
+    pub async fn surface_config(window: &Window)
+        -> (wgpu::Surface, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
+        // The instance is a handle to our GPU
+        // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
+        let instance = wgpu::Instance::new(wgpu::Backends::all());
+        let surface = unsafe { instance.create_surface(&window) };
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .unwrap();
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("lib adapter"),
+                    features: wgpu::Features::empty(),
+                    // WebGL doesn't support all of wgpu's features, so if
+                    // we're building for the web we'll have to disable some.
+                    limits: if cfg!(target_arch = "wasm32") {
+                        wgpu::Limits::downlevel_webgl2_defaults()
+                    } else {
+                        wgpu::Limits::default()
+                    },
+                },
+                // Some(&std::path::Path::new("trace")), // Trace path
+                None,
+            )
+            .await
+            .unwrap();
+
+        let size = window.inner_size();
+        let config = wgpu::SurfaceConfiguration {
+            alpha_mode: *surface.get_supported_alpha_modes(&adapter).first().unwrap(),
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: *surface.get_supported_formats(&adapter).first().unwrap(),
+            width: size.width,
+            height: size.height,
+            present_mode: wgpu::PresentMode::Fifo,
+        };
+        surface.configure(&device, &config);
+
+        return (surface, device, queue, config);
+    }
+
+
 
        pub async fn make_glpyhs(device: &mut wgpu::Device, 
                                 queue: &mut wgpu::Queue, font_atlas: &FontAtlas, 
@@ -382,7 +381,7 @@ impl State {
 
                     #[cfg(debug_assertions)]
                     {
-                        let image_row = (u32_size * bbox.0.0 as u32);
+                        let image_row = u32_size * bbox.0.0 as u32;
                         let image_size = image_row * bbox.0.1 as u32;
 
                         let output_buffer_size : u64 = image_size.next_multiple_of(256) as u64 * bbox.0.1;

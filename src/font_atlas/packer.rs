@@ -42,15 +42,13 @@ type Line = [i64; 5];
 // gets the minumum size given the maximum bbox
 // this only works diagonal so 
 fn get_min_size(bboxes: Vec<BBox>) -> Point {
-    return bboxes.clone().into_iter().fold((0, 0), |mut acc, bbox| {
-        if acc.0 < bbox.width {
-            acc.0 += bbox.width;
-        }
-        else if acc.1 < bbox.height {
-            acc.1 += bbox.height;
-        }
-        return acc;
+    let area = bboxes.clone().into_iter().fold(0, |mut acc, bbox| {
+            acc += bbox.width * bbox.height;
+            return acc;
     });
+
+    use num::integer::Roots;
+    return (area.sqrt(), area.sqrt());
 }
 
 // higher order function for sorting
@@ -143,7 +141,7 @@ fn search_lines(rect: BBox, xlines: &mut Vec<Line>,
 }
 
 // makes a new line from the rectangle that does not fit
-fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
+fn create_layer(rect: BBox, xlines: &mut Vec<Line>, min_size: Point) -> Line {
     // sort by width
     xlines.sort_by(|line_a, line_b| {
         return area_ord(area_protect_abs(line_a[2] - line_a[1]) as u64,
@@ -151,7 +149,11 @@ fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
     });
 
     // clone longest to create new
-    let mut longest_line = xlines.last().unwrap().clone();
+    let mut longest_line = xlines.last().unwrap_or({
+        let xlines_start: Line = [0, min_size.0 as i64, 0,
+                                        min_size.1 as i64, 1];
+        return xlines_start;
+    }).clone();
 
     // set height to rects height
     let u_height = rect.height.try_into().unwrap();
@@ -190,31 +192,43 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
     }
 
     // search placements in line
-    let new_pos = placements.clone()
+    if let Some(new_pos) = placements.clone()
         .into_iter()
-        .filter(|place| xlines[place.line_idx - 1] == line)
-        .fold((line[0] as u64 + rect.width, line[2] as u64), |mut acc, place| {
-            // check if there is a leftmost point already stored
-            if acc.0 < place.pos.0 {
-                // set start pos to that point
-                acc.0 = place.pos.0 + rect.width;
-            }
-            return acc;
-        });
+        .filter(|place| if let Some(place) = xlines.clone().get(place.line_idx) { 
+                place == &line 
+            } 
+            else { 
+                return false;
+            }).fold(Some((line[0] as u64 + rect.width, line[2] as u64)),
 
-    if new_pos.0 < line[1] as u64 {
-        placements.push(Placement {
-            bbox: rect,
-            pos: new_pos,
-            line_idx
-        });
-        xlines[line_idx][0] = new_pos.0 as i64;
-        xlines[line_idx][2] = new_pos.1 as i64;
-        return Some(new_pos);
+            |s, place| {
+                if let Some(mut acc) = s {
+                    // check if there is a leftmost point already stored
+                    if acc.0 < place.pos.0 {
+                        // set start pos to that point
+                        acc.0 = place.pos.0 + rect.width;
+                    }
+                    return Some(acc);
+                }
+                else {
+                    return None;
+                }
+            }) 
+    {
+        if new_pos.0 < line[1] as u64 {
+            placements.push(Placement {
+                bbox: rect,
+                pos: new_pos,
+                line_idx
+            });
+            xlines[line_idx][0] = new_pos.0 as i64;
+            xlines[line_idx][2] = new_pos.1 as i64;
+            return Some(new_pos);
+        }
     }
 
-    // pos doesn't fit 
-    return None;
+   // pos doesn't fit 
+   return None;
 }
 
 // finds the wasted space sets them up as inversed point i.e. space leftover
@@ -417,47 +431,63 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     // we reverse the list to create queue
     boxes.reverse();
 
-
     let mut placements: Vec<Placement> = Vec::new();
 
+
+    // clone boxes to use as queue
+    let mut iter_boxes = boxes.clone();
     // forth step select rect
-    for rect in boxes.clone() {
+    while !iter_boxes.is_empty() {
         let mut pos :Option<(u64, u64)> = None;
+        let rect = iter_boxes.pop().unwrap();
 
-        while pos == None { 
-            // mode 1 & 2 search, unwrap is mode 3
-            let selected_line = search_lines(rect.clone(), &mut xlines, &mut placements)
-                .unwrap_or_else(|| {
-                create_layer(rect.to_owned(), &mut xlines);
-                return xlines.len() - 1;
-            });
+        // mode 1 & 2 search, unwrap is mode 3
+        let selected_line = search_lines(rect.clone(), &mut xlines, &mut placements)
+            .unwrap_or_else(|| {
+            create_layer(rect.to_owned(), &mut xlines, min_size);
+            return xlines.len() - 1;
+        });
 
-            // fifth step
-            // update selected line to selected rect
-            pos = find_leftmost(&mut placements, rect.to_owned(), 
-                          &mut xlines, selected_line);
+        // fifth step
+        // update selected line to selected rect
+        pos = find_leftmost(&mut placements, rect.to_owned(), 
+                      &mut xlines, selected_line);
 
+               
+        // if can't find position keep going until all boxes are done 
+        if pos != None { 
+            // find the waste space
+            let inv_space = wasted_space(&mut placements, &mut xlines); 
+
+            // if more than one house group them
+            if inv_space.len() > 1 {
+                // get houses and group them
+                let houses = empty_houses(inv_space, &mut xlines);
+
+                // set the merged lines to our available lines
+                let grouped_houses = merge_houses(houses, &mut xlines);
+                xlines = grouped_houses.into_iter().flatten()
+                    .map(|x| xlines[x.line_idx]).collect::<Vec<Line>>();
+            }
+            else {
+                // take directly from inv_space
+                let mut new_xlines = xlines_start.clone();
+                new_xlines.append(&mut  inv_space.into_iter().map(|x| xlines[x.line_idx])
+                    .collect::<Vec<Line>>());
+                xlines = new_xlines;
+            }
         }
-
-        // find the waste space
-        let inv_space = wasted_space(&mut placements, &mut xlines); 
-
-        // if more than one house group them
-        if inv_space.len() > 1 {
-            // get houses and group them
-            let houses = empty_houses(inv_space, &mut xlines);
-
-            // set the merged lines to our available lines
-            let grouped_houses = merge_houses(houses, &mut xlines);
-            xlines = grouped_houses.into_iter().flatten()
-                .map(|x| xlines[x.line_idx]).collect::<Vec<Line>>();
-        }
-        else {
-            // take directly from inv_space
-            let mut new_xlines = xlines_start.clone();
-            new_xlines.append(&mut  inv_space.into_iter().map(|x| xlines[x.line_idx])
-                .collect::<Vec<Line>>());
-            xlines = new_xlines;
+        else {  // this means that there is a box 
+                // that doesn't fit
+            // so we increase the min_size by rects size 
+            for line in xlines.iter_mut() {
+                line[1] += 1;
+                line[3] += 1;
+            }
+            // push back into queue 
+            iter_boxes.push(rect);
+            // restart the loop at the position
+            continue;
         }
     }
 
@@ -470,7 +500,7 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
            xlines.len(), min_size.0 * min_size.1);
     return (
         (xlines[0][1] as u64, 
-         (xlines[0][3] + (xlines.last().unwrap_or(&xlines[0])[1])) as u64),
+         xlines[0][3] as u64),
             placements.into_iter()
                 .map(|place| ((place.bbox, place.pos)))
                 .collect()

@@ -4,9 +4,16 @@ use crate::font_atlas::packer::BBox;
 use crate::font_atlas::packer::area_protect;
 
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use wgpu::CommandEncoderDescriptor;
+use wgpu::BufferDescriptor;
+use wgpu::Extent3d;
 use wgpu::MAP_ALIGNMENT;
 use wgpu::COPY_BUFFER_ALIGNMENT;
+use wgpu::TextureDimension;
+use wgpu::TextureUsages;
+use wgpu::TextureFormat;
+use wgpu::TextureDescriptor;
 
 const CHANNELS: u64 = 4;
 
@@ -15,7 +22,6 @@ pub struct TermConfig{
     pub font_dir: String,
     pub font_size: f32
 }
-
 
 fn is_multiple_of(n : u128, multiple: u128) -> bool
 {
@@ -28,7 +34,7 @@ fn is_multiple_of(n : u128, multiple: u128) -> bool
 pub struct FontAtlas {
     pub atlas : wgpu::Buffer,
     // point = (u64, u64) => ((w, h), offset, (x, y))
-    pub lookup : HashMap<char, (Point, u128, Point)>,
+    pub lookup : HashMap<char, (Point, Point)>,
     pub atlas_size : Point,
 }
 
@@ -37,29 +43,89 @@ impl FontAtlas {
     // creates the font texture atlas given a vector of rasterized glpyhs
     // and positions of where those glpyhs are using a wpu::Buffer
     // device is locked so need reference
-    fn font_atlas(pixels: &mut Vec<u8>, 
+    fn font_atlas(pixels_boxes: &mut Vec<(Vec<u8>, (BBox, (u64, u64)))>, 
                   device: &mut wgpu::Device, queue: &mut wgpu::Queue, size: (u64, u64)) -> 
         wgpu::Buffer {
 
-        let enc = device.create_command_encoder(
+        let mut enc = device.create_command_encoder(
             &CommandEncoderDescriptor { label: Some("font_atlas_enc") });
 
-        // size conversion error handling next
-        let u64_size = <usize as TryInto::<u64>>::try_into(pixels.len())
-            .unwrap();
+        let mut font_atlas_tex = device.create_texture(
+            &TextureDescriptor { 
+                label: Some("font_atlas_tex"), 
+                size: Extent3d{
+                    width: size.0 as u32,
+                    height: size.1 as u32,
+                    depth_or_array_layers: 1
+                }, 
+                mip_level_count: 1, 
+                sample_count: 1, 
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8UnormSrgb, 
+                usage: TextureUsages::RENDER_ATTACHMENT |
+                   TextureUsages::COPY_SRC |
+                   TextureUsages::COPY_DST
+            }
+        );
 
-        // create texture buffer
-        let atlas_buf = device.create_buffer(&wgpu::BufferDescriptor{
-            size: u64_size,
-            usage: wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::MAP_READ,
-            label: Some("atlas_buffer"),
-            mapped_at_creation: true 
-        });
+        for (pixel_box_data, (pixels_bbox, pos_pixels)) in pixels_boxes { 
+             queue.write_texture(
+                 wgpu::ImageCopyTextureBase {
+                   texture: &font_atlas_tex,
+                   mip_level: 0,
+                   origin: wgpu::Origin3d {
+                       x: pos_pixels.0 as u32,
+                       y: pos_pixels.1 as u32,
+                       z: 0
+                   },
+                   aspect: wgpu::TextureAspect::All
+               }, 
+               &pixel_box_data.as_slice(), 
+               wgpu::ImageDataLayout { 
+                   offset: 0, 
+                   bytes_per_row: NonZeroU32::new(pixels_bbox.width as u32 * 4), 
+                   rows_per_image: None 
+               },
+               wgpu::Extent3d{
+                    width: pixels_bbox.width as u32,
+                    height: pixels_bbox.height as u32,
+                    depth_or_array_layers: 1
+                }
+            );
+        }
 
-        
-        // write as group 
-        queue.write_buffer(&atlas_buf, 0, pixels.clone().as_slice()); 
+        let u32_size = std::mem::size_of::<u32>() as u64;
+        let font_atlas_size = (u32_size * size.0 * size.1) as wgpu::BufferAddress;
+        let atlas_buf = device.create_buffer(
+           &BufferDescriptor { 
+                label: Some("font_atlas buffer") , 
+                usage: wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::MAP_READ, 
+                mapped_at_creation: true,
+                size: font_atlas_size
+            });
+
+        enc.copy_texture_to_buffer(    
+            wgpu::ImageCopyTexture {
+                aspect: wgpu::TextureAspect::All,
+                texture: &font_atlas_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                }, 
+            wgpu::ImageCopyBufferBase { 
+                buffer: &atlas_buf, 
+                layout: wgpu::ImageDataLayout {
+                    offset: 0, 
+                    bytes_per_row: NonZeroU32::new((font_atlas_size * u32_size) as u32),
+                    rows_per_image: NonZeroU32::new(font_atlas_size as u32)
+                }
+            },
+            Extent3d { 
+                width: size.0 as u32, 
+                height: size.1 as u32, 
+                depth_or_array_layers:1 
+            }
+        );
 
         // submit queue with empty command buffer to write to gpu
         use std::iter;
@@ -68,9 +134,13 @@ impl FontAtlas {
         #[cfg(debug_assertions)]
         {
             println!("buffer submitted returning function...");
+            
             use image::{ImageBuffer, Rgba}; 
-            image::save_buffer("fontmap.png", pixels.clone().as_slice(), 
-                               (size.0 / 4) as u32, size.1 as u32, image::ColorType::Rgba8);
+            let fontmap = 
+                image::ImageBuffer::<Rgba<u8>, _>::from_raw(size.0  as u32, size.1 as u32, 
+                                             atlas_buf.slice(..).get_mapped_range());
+            fontmap.expect("oof image buffer dgb creation failed")
+                .save("fontmap.png").unwrap_or({println!("fontmap save failed");});
         }
 
         device.poll(wgpu::Maintain::Wait);
@@ -78,147 +148,8 @@ impl FontAtlas {
         #[cfg(debug_assertions)]
         println!("buffer complete");
 
-        atlas_buf.unmap();
 
         return atlas_buf;
-    }
-
-    // force pixels into alignment by adding to end
-    fn aligner_start (mut pixels : Vec<u8>, offset: usize) -> Vec<u8> {
-        use std::iter;
-        let mut offset_vec: Vec<u8> = 
-                iter::repeat(0).take(offset).collect();
-        offset_vec.append(&mut pixels);
-        return pixels;
-    } 
-
-    // add whitespace to pixels through pos_boxes
-    fn add_whitespace(pixels : Vec<u8>, pos_boxes : Vec<(BBox, (u64, u64))>) -> Vec<u8> {
-        let mut old_pixels = pixels.clone();
-        // assuming pos_boxes are sorted and aligned with pixels
-        for windows in pos_boxes.windows(2) {
-            let bbox = &windows[0].0; 
-            let pos = windows[0].1;
-            let pixel_end = (bbox.width + pos.0) * (bbox.height * pos.1); 
-            // take the position of the next element
-            let end_pos = windows[1].1.0 * windows[1].1.1; 
-
-            for idx in pixel_end..end_pos {
-                old_pixels.insert(idx as usize, 0); // insert whitespace 
-                                                    // for pixel
-            }
-        }
-
-        return old_pixels;
-    }
-
-    // force pixels into alignment
-    // puts in whitespace where packer has left it 
-    fn record_align_to_offset (pixels : Vec<u8>, 
-                        pos_boxes : Vec<(BBox, (u64, u64))>) 
-            -> (Vec<u8>, HashMap<char, (Point, u128, Point)>){
-
-        let mut new_pixels: Vec<u8> = vec![0; MAP_ALIGNMENT as usize]; 
-        let mut positions: HashMap<char,
-            (Point, u128, Point)> = HashMap::new();
-
-        let last_glpyh = '\0';
-        for (bbox, pos) in pos_boxes.into_iter() {
-
-            // flatten out position from packer
-            let mut start = (area_protect(pos.0) * area_protect(pos.1) 
-                             * CHANNELS) as usize;
-            if start == 1 {start = 0;} // get rid of carryover
-
-            // find endpoint
-            let mut end =  start + (((bbox.width * bbox.height) 
-                                     * CHANNELS) as usize);
-
-            // if in range
-            if let Some(mut glpyh) = pixels.get(start..end)
-                .and_then(|x| Some(x.to_vec())) {
-
-                // start check to alginment
-                if !is_multiple_of(start as u128, MAP_ALIGNMENT.into()) {
-                    let padding = start.next_multiple_of(MAP_ALIGNMENT as usize);
-                    if last_glpyh != '\0' {
-                        positions.get_mut(&last_glpyh).and_then(|bbox| {
-                            bbox.1 += (padding as i64 - bbox.2.1 as i64)
-                                .abs() as u128; 
-                            bbox.2.1 = padding as u64;
-                            return Some(bbox);
-                        });
-                    } 
-                    // set start to the next MAP_ALIGNMENT
-                    // recalc end for finding start.
-                    start = padding;
-                    end =  start + (((bbox.width * bbox.height) 
-                    * CHANNELS) as usize);
-                }
-
-                let len = glpyh.len();
-                let mut offset : isize = (end - start) as isize - len as isize;
-                offset = offset.abs();
-
-                // this is the inner check for texutres
-                if !is_multiple_of(end as u128,
-                        COPY_BUFFER_ALIGNMENT.into()) || 
-                    !is_multiple_of(len as u128, COPY_BUFFER_ALIGNMENT.into())
-                {  
-                    end = end.next_multiple_of(COPY_BUFFER_ALIGNMENT as usize);
-
-                    // set end as length aligned just update.
-                    offset = (end - start) as isize - len as isize;
-                    offset = offset.abs();
-                    glpyh = Self::aligner_start(glpyh, offset as usize);
-                }
-
-                // if conversion OK then add to hash
-                if let (Ok(start_u64), Ok(end_u64)) = (start.try_into(),
-                    end.try_into()) {
-
-                    #[cfg(debug_assertions)]
-                    if start == end { panic!("start end the same!"); }
-                    else if !is_multiple_of(start as u128,
-                                           MAP_ALIGNMENT as u128) {
-                        println!("offset {} end {} start {}", 
-                                 offset, end, start);
- 
-                        panic!("start is misaligned");
-                    }
-                    else if !is_multiple_of(end as u128,
-                                           COPY_BUFFER_ALIGNMENT as u128) {
-                        println!("offset {} end {} start {}", 
-                                 offset, end, start);
-                        panic!("end is misaligned");
-                    }
-                    
-                    // if too short pad
-                    if end - start !=
-                        (bbox.width * bbox.height * CHANNELS) as usize {
-                        let pad : isize = (end - start) as isize - 
-                            ((bbox.width * bbox.height * CHANNELS)
-                                as isize);
-                        let pad: usize = pad.abs() as usize; // set padding to N. 
-                        glpyh = Self::aligner_start(glpyh, pad);
-                        offset += pad as isize;
-                        end += pad;
-                    } 
-
-
-                    new_pixels.append(&mut glpyh);
-                    positions.insert(bbox.glpyh, ((bbox.width, bbox.height), 
-                                    offset as u128, (start_u64, end_u64))); 
-                }
-                else{
-                    #[cfg(debug_assertions)]
-                    println!("glpyh {}, start {}, end {} couldn't be positioned",
-                            bbox.glpyh, start, end);
-                }
-            }
-        }
-
-        return (new_pixels, positions);
     }
 
     // creates a new FontAtlas struct
@@ -235,7 +166,7 @@ impl FontAtlas {
                                      fontdue::FontSettings::default()).unwrap();
 
         // find raster data and bboxes
-        let mut pixels : Vec<u8> = Vec::new();
+        let mut pixels : Vec<(char, Vec<u8>)> = Vec::new();
         let mut bboxes = Vec::new();
         for (&glyph_c, &id) in face.chars() {
             // convert id -> u16 
@@ -269,7 +200,7 @@ impl FontAtlas {
             // push pixel data 
             // null char has problems with encoding
             if  !(metrics.width == 0 || metrics.height == 0 || glyph_c == '\0') {
-                pixels.append(&mut rgba);
+                pixels.push((glyph_c, rgba));
                 bboxes.push(BBox { glpyh: glyph_c, 
                     width: metrics.width as u64,
                     height: metrics.height as u64 });
@@ -284,29 +215,36 @@ impl FontAtlas {
         // pos_boxes is not in order  
         let (size, pos_boxes) = packer(&mut bboxes);
 
-
-        // sorting for some reason drops positions
-        // so we aren't going to sort here.
-        pixels = Self::add_whitespace(pixels, pos_boxes.clone());
-
         // remove None types
-        let pos_boxes = 
+        let pos_boxes : Vec<(BBox, (u64, u64))> = 
             pos_boxes.into_iter().
             filter(|(_, pos)| 
                    area_protect(pos.1) * 
                    area_protect(pos.0) != 0)
             .collect();
 
-        // align
-        let (mut pixels, atlas_lookup) =
-            Self::record_align_to_offset(pixels, pos_boxes);
+        let mut atlas_lookup = HashMap::new(); 
+        for boxes in pos_boxes.clone() {
+            atlas_lookup.insert(boxes.0.glpyh,
+                                ((boxes.0.width, boxes.0.height), 
+                                 boxes.1));
+        }
 
+        let mut pixels_boxes : Vec<(Vec<u8>, (BBox, (u64, u64)))> = Vec::new();
+        for (glpyh, data) in pixels { 
+            let mut position : Vec<(BBox, (u64, u64))> =
+                pos_boxes.clone().into_iter().filter(|(bbox, pos)| bbox.glpyh == glpyh).collect(); 
+            pixels_boxes.push((data, position.pop().unwrap()));            
+        }
 
         // create atlas texutre set up as image tex
-        let atlas = Self::font_atlas(&mut pixels, device, queue, size);
+        let atlas = Self::font_atlas(&mut pixels_boxes, 
+                                     device, queue, size);
         return Self{atlas, 
             lookup : atlas_lookup, atlas_size : size}; 
     }
+
+    
 
     // function to get glpyh data on a single char
     // returns wgpu::BufferSlice ready to be rendered as image data
@@ -314,10 +252,16 @@ impl FontAtlas {
         (wgpu::BufferSlice, u128) {
         // get position of char 
         let pos = self.lookup.get(&glpyh).unwrap();
+
+        // calc start and end
+        let start = pos.0.0 * pos.0.1;
+        let end = pos.0.0 + pos.1.0 * pos.0.1 + pos.1.1;
+
         // return glpyh data as slice and offset
         #[cfg(debug_assertions)]
-        println!("offsets start {} end {} width {} height {} offset {}", 
-            pos.2.0, pos.2.1, pos.0.0, pos.0.1, pos.1);
-        return (self.atlas.slice(pos.2.0..pos.2.1), pos.1); 
+        println!("offsets start {} end {} width {} height {}",
+        start, end, pos.0.0, pos.0.1);
+
+        return (self.atlas.slice(start..end), 0); 
     }
 }
