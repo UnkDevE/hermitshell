@@ -301,7 +301,8 @@ impl State {
                     let glpyh_data = glpyh_slice.get_mapped_range();
                     let Some(bbox) = font_atlas.lookup.get(&glpyh) else 
                         {panic!("no lookup for glpyh")};
-                    
+
+                    let u32_size = std::mem::size_of::<u32>() as u32;
                     let tex_size = wgpu::Extent3d{
                                 height: bbox.0.1 as u32, // height
                                 width: bbox.0.0 as u32, // width
@@ -321,7 +322,6 @@ impl State {
                                 | wgpu::TextureUsages::COPY_SRC
                     });
 
-                    let u32_size = std::mem::size_of::<u32>() as u32;
                     // write from buffer
                     queue.write_texture(
                         wgpu::ImageCopyTexture{

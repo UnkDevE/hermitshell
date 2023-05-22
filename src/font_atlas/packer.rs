@@ -141,24 +141,23 @@ fn search_lines(rect: BBox, xlines: &mut Vec<Line>,
 }
 
 // makes a new line from the rectangle that does not fit
-fn create_layer(rect: BBox, xlines: &mut Vec<Line>, min_size: Point) -> Line {
+fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
     // sort by width
     xlines.sort_by(|line_a, line_b| {
         return area_ord(area_protect_abs(line_a[2] - line_a[1]) as u64,
             area_protect_abs(line_b[2] - line_a[1]) as u64);
     });
 
-    // clone longest to create new
-    let mut longest_line = xlines.last().unwrap_or({
-        let xlines_start: Line = [0, min_size.0 as i64, 0,
-                                        min_size.1 as i64, 1];
-        return xlines_start;
-    }).clone();
+    // this returns an Err as None, which must not happen
+    let mut longest_line = xlines.last().unwrap().clone();
 
     // set height to rects height
-    let u_height = rect.height.try_into().unwrap();
+    let u_height : i64 = rect.height.try_into().unwrap();
+    let u_width : i64 = rect.width.try_into().unwrap();
+    longest_line[0] = 0;
+    longest_line[1] += u_width;
     longest_line[2] = u_height;
-    longest_line[3] = longest_line[3] - u_height;
+    longest_line[3] += u_height;
     longest_line[4] = 1;
 
     xlines.push(longest_line);
@@ -232,7 +231,7 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
 }
 
 // finds the wasted space sets them up as inversed point i.e. space leftover
-fn wasted_space(placements:&mut Vec<Placement>, xlines: &mut Vec<Line>) 
+fn wasted_space(placements:&mut Vec<Placement>, xlines: Vec<Line>) 
     -> Vec<Placement> {
     // clone max width
     let width = (xlines[0][2] - xlines[0][1]).clone();
@@ -293,13 +292,6 @@ fn wasted_space(placements:&mut Vec<Placement>, xlines: &mut Vec<Line>)
                                 xlines[line.line_idx][3] as u64);
         inversed_point.push(inv_point_place);
     }
-
-    // clean up indexes
-    inversed_point = 
-        inversed_point.into_iter().enumerate().map(|(idx, mut pl)| { 
-        pl.line_idx = idx;
-        return pl;
-    }).collect();
 
     return inversed_point;
 }
@@ -438,63 +430,57 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     let mut iter_boxes = boxes.clone();
     // forth step select rect
     while !iter_boxes.is_empty() {
-        let mut pos :Option<(u64, u64)> = None;
         let rect = iter_boxes.pop().unwrap();
 
         // mode 1 & 2 search, unwrap is mode 3
-        let selected_line = search_lines(rect.clone(), &mut xlines, &mut placements)
+        let selected_line = search_lines(rect.clone(), 
+                                         &mut xlines, &mut placements)
             .unwrap_or_else(|| {
-            create_layer(rect.to_owned(), &mut xlines, min_size);
+            create_layer(rect.to_owned(), &mut xlines);
             return xlines.len() - 1;
         });
 
         // fifth step
         // update selected line to selected rect
-        pos = find_leftmost(&mut placements, rect.to_owned(), 
-                      &mut xlines, selected_line);
+        // if no line fit create one
+        let mut pos = find_leftmost(&mut placements, rect.clone(), 
+                      &mut xlines, selected_line).unwrap_or_else(|| {
+            create_layer(rect.to_owned(), &mut xlines);
+            let selected_line = xlines.len() - 1;
+            return find_leftmost(
+                &mut placements, rect.to_owned(), 
+                    &mut xlines, selected_line).unwrap();
+        });
+           
+        // find the waste space
+        let inv_space = wasted_space(&mut placements, xlines.clone()); 
 
-               
-        // if can't find position keep going until all boxes are done 
-        if pos != None { 
-            // find the waste space
-            let inv_space = wasted_space(&mut placements, &mut xlines); 
+        // if more than one house group them
+        if inv_space.len() > 1 {
+            // get houses and group them
+            let houses = empty_houses(inv_space, &mut xlines);
 
-            // if more than one house group them
-            if inv_space.len() > 1 {
-                // get houses and group them
-                let houses = empty_houses(inv_space, &mut xlines);
-
-                // set the merged lines to our available lines
-                let grouped_houses = merge_houses(houses, &mut xlines);
+            // set the merged lines to our available lines
+            let grouped_houses = merge_houses(houses, &mut xlines);
+            if !grouped_houses.is_empty() {
+                // this might cause the error for 152
                 xlines = grouped_houses.into_iter().flatten()
                     .map(|x| xlines[x.line_idx]).collect::<Vec<Line>>();
             }
-            else {
-                // take directly from inv_space
-                let mut new_xlines = xlines_start.clone();
-                new_xlines.append(&mut  inv_space.into_iter().map(|x| xlines[x.line_idx])
-                    .collect::<Vec<Line>>());
-                xlines = new_xlines;
-            }
         }
-        else {  // this means that there is a box 
-                // that doesn't fit
-            // so we increase the min_size by rects size 
-            for line in xlines.iter_mut() {
-                line[1] += 1;
-                line[3] += 1;
-            }
-            // push back into queue 
-            iter_boxes.push(rect);
-            // restart the loop at the position
-            continue;
+        else {
+            // take directly from inv_space
+            let mut new_xlines = xlines_start.clone();
+            new_xlines.append(&mut  inv_space.into_iter().map(|x| xlines[x.line_idx])
+                .collect::<Vec<Line>>());
+            xlines = new_xlines;
         }
     }
 
     // if space len == 1 still returns
     // remove line data to return as unused
     #[cfg(debug_assertions)]
-    print!("size predicted {} len {} min_size {}", 
+    println!("size predicted {} len {} min_size {}", 
            (xlines[0][1] as u64 * (xlines[0][3] + 
               (xlines.last().unwrap_or(&xlines[0])[1])) as u64),
            xlines.len(), min_size.0 * min_size.1);

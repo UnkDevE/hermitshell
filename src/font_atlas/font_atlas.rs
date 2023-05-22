@@ -5,11 +5,14 @@ use crate::font_atlas::packer::area_protect;
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
+use num::Integer;
+use wgpu::CommandEncoder;
 use wgpu::CommandEncoderDescriptor;
 use wgpu::BufferDescriptor;
 use wgpu::Extent3d;
 use wgpu::MAP_ALIGNMENT;
 use wgpu::COPY_BUFFER_ALIGNMENT;
+use wgpu::Queue;
 use wgpu::TextureDimension;
 use wgpu::TextureUsages;
 use wgpu::TextureFormat;
@@ -33,7 +36,7 @@ fn is_multiple_of(n : u128, multiple: u128) -> bool
 
 pub struct FontAtlas {
     pub atlas : wgpu::Buffer,
-    // point = (u64, u64) => ((w, h), offset, (x, y))
+    // point = (u64, u64) => ((w, h), (x, y))
     pub lookup : HashMap<char, (Point, Point)>,
     pub atlas_size : Point,
 }
@@ -54,7 +57,7 @@ impl FontAtlas {
             &TextureDescriptor { 
                 label: Some("font_atlas_tex"), 
                 size: Extent3d{
-                    width: size.0 as u32,
+                    width: size.0  as u32,
                     height: size.1 as u32,
                     depth_or_array_layers: 1
                 }, 
@@ -95,14 +98,13 @@ impl FontAtlas {
         }
 
         let u32_size = std::mem::size_of::<u32>() as u64;
-        let font_atlas_size = (u32_size * size.0 * size.1) as wgpu::BufferAddress;
         let atlas_buf = device.create_buffer(
            &BufferDescriptor { 
                 label: Some("font_atlas buffer") , 
                 usage: wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::MAP_READ, 
+                    | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: true,
-                size: font_atlas_size
+                size: (size.0 * u32_size as u64).next_multiple_of(256) * size.1
             });
 
         enc.copy_texture_to_buffer(    
@@ -116,8 +118,8 @@ impl FontAtlas {
                 buffer: &atlas_buf, 
                 layout: wgpu::ImageDataLayout {
                     offset: 0, 
-                    bytes_per_row: NonZeroU32::new((font_atlas_size * u32_size) as u32),
-                    rows_per_image: NonZeroU32::new(font_atlas_size as u32)
+                    bytes_per_row: NonZeroU32::new((size.0 * u32_size).next_multiple_of(256) as u32),
+                    rows_per_image: NonZeroU32::new(size.1 as u32)
                 }
             },
             Extent3d { 
@@ -127,27 +129,24 @@ impl FontAtlas {
             }
         );
 
+        // unmap the buffer
+        atlas_buf.unmap();
+
         // submit queue with empty command buffer to write to gpu
         use std::iter;
         queue.submit(iter::once(enc.finish()));
-
-        #[cfg(debug_assertions)]
-        {
-            println!("buffer submitted returning function...");
-            
-            use image::{ImageBuffer, Rgba}; 
-            let fontmap = 
-                image::ImageBuffer::<Rgba<u8>, _>::from_raw(size.0  as u32, size.1 as u32, 
-                                             atlas_buf.slice(..).get_mapped_range());
-            fontmap.expect("oof image buffer dgb creation failed")
-                .save("fontmap.png").unwrap_or({println!("fontmap save failed");});
-        }
-
         device.poll(wgpu::Maintain::Wait);
 
         #[cfg(debug_assertions)]
-        println!("buffer complete");
-
+        {
+            println!("buffer complete");
+            use image::Rgba;
+            // save buffer image as file
+            let image = image::ImageBuffer::
+                <Rgba<u8>, _>::from_raw(size.0.next_multiple_of(256) as u32, size.1 as u32, 
+                                         &atlas_buf.slice(..)).unwrap();
+            image.save("fontmap.png").unwrap();
+        }
 
         return atlas_buf;
     }
@@ -254,14 +253,25 @@ impl FontAtlas {
         let pos = self.lookup.get(&glpyh).unwrap();
 
         // calc start and end
+        
+        // position
         let start = pos.0.0 * pos.0.1;
+        // position plus width and height
         let end = pos.0.0 + pos.1.0 * pos.0.1 + pos.1.1;
+
+        // we have increased bytes_per_row to a multiple of 256
+        // buffer alignment requires it to start at MAP_ALIGNMENT
+        // and end at COPY_BUFFER_ALIGNMENT
 
         // return glpyh data as slice and offset
         #[cfg(debug_assertions)]
         println!("offsets start {} end {} width {} height {}",
         start, end, pos.0.0, pos.0.1);
 
-        return (self.atlas.slice(start..end), 0); 
+        // we don't know if aligned but we are anyway
+        // not good.
+        return (self.atlas.
+                slice(start.next_multiple_of(8)..end.next_multiple_of(4)),
+                0); 
     }
 }
