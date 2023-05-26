@@ -136,18 +136,6 @@ impl FontAtlas {
         use std::iter;
         queue.submit(iter::once(enc.finish()));
         device.poll(wgpu::Maintain::Wait);
-
-        #[cfg(debug_assertions)]
-        {
-            println!("buffer complete");
-            use image::Rgba;
-            // save buffer image as file
-            let image = image::ImageBuffer::
-                <Rgba<u8>, _>::from_raw(size.0.next_multiple_of(256) as u32, size.1 as u32, 
-                                         &atlas_buf.slice(..)).unwrap();
-            image.save("fontmap.png").unwrap();
-        }
-
         return atlas_buf;
     }
 
@@ -239,6 +227,8 @@ impl FontAtlas {
         // create atlas texutre set up as image tex
         let atlas = Self::font_atlas(&mut pixels_boxes, 
                                      device, queue, size);
+
+
         return Self{atlas, 
             lookup : atlas_lookup, atlas_size : size}; 
     }

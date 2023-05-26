@@ -1,5 +1,6 @@
 #![feature(int_roundings)]
 #![feature(iter_intersperse)]
+#![feature(slice_pattern)]
 pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
@@ -12,6 +13,7 @@ use winit::{
     window::Window
 };
 
+use core::slice::SlicePattern;
 use std::iter;
 
 #[repr(C)] #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -89,7 +91,43 @@ impl State {
         // load fontatlas
         let font_atlas = FontAtlas::new(term_config.clone(), &mut device,
                                         &mut queue);
+        #[cfg(debug_assertions)]
+        {
+            println!("atlas buffer complete");
 
+            let slice = font_atlas.atlas.slice(..);
+            let (sender, receiver) = 
+                    futures_intrusive::channel::shared::oneshot_channel();
+                slice.map_async(wgpu::MapMode::Read, 
+                                      move |v| sender.send(v).unwrap());
+
+
+            println!("polling for entire buffer");
+
+            device.poll(wgpu::Maintain::Wait);
+            if let Some(Ok(())) = receiver.receive().await {
+                let buf_data = slice.get_mapped_range();
+
+                use image::Rgba;
+                // save buffer image as file
+                if let Ok(image) = image::ImageBuffer::
+                    <Rgba<u8>, _>::from_raw(font_atlas.atlas_size.0.next_multiple_of(256) as u32, 
+                                            font_atlas.atlas_size.1 as u32, 
+                         buf_data.as_slice()) {
+                        if None == image.save("fontmap.png").ok() {
+                            println!("fontmap save unsuccesful")
+                        }
+                        else {
+                            println!("fontmap save successful")
+                        }
+                    }
+                else i{
+                    
+                    println!("buffer from_raw unsuccesful")
+                }
+            }
+            font_atlas.atlas.unmap();
+        }
 
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
             Self::make_render_pipeline(&mut device, &config);
