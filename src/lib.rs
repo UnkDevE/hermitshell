@@ -1,11 +1,15 @@
 #![feature(int_roundings)]
 #![feature(iter_intersperse)]
 #![feature(slice_pattern)]
+#![feature(default_free_fn)]
 pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
 
-use image::RgbaImage;
+use wgpu::Backend;
+use wgpu::ImageDataLayout;
+use wgpu::TextureAspect;
+use wgpu::TextureFormat;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
 use winit::{
@@ -14,6 +18,7 @@ use winit::{
 };
 
 use core::slice::SlicePattern;
+use std::default::default;
 use std::iter;
 
 #[repr(C)] #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -110,20 +115,18 @@ impl State {
 
                 use image::Rgba;
                 // save buffer image as file
-                if let Ok(image) = image::ImageBuffer::
+                //match 
+                match image::ImageBuffer::
                     <Rgba<u8>, _>::from_raw(font_atlas.atlas_size.0.next_multiple_of(256) as u32, 
                                             font_atlas.atlas_size.1 as u32, 
-                         buf_data.as_slice()) {
-                        if None == image.save("fontmap.png").ok() {
-                            println!("fontmap save unsuccesful")
+                     buf_data.as_slice()) {
+                        Some(ibuf) => match ibuf.save("fontmap.png") {
+                            Ok(()) => println!("Image save succesful"),
+                            Err(e) => println!("Image save unsuccesful\n {}", e)
                         }
-                        else {
-                            println!("fontmap save successful")
+                        None => {
+                            println!("Image buffer creation unsuccseful");
                         }
-                    }
-                else i{
-                    
-                    println!("buffer from_raw unsuccesful")
                 }
             }
             font_atlas.atlas.unmap();
@@ -254,8 +257,11 @@ impl State {
         -> (wgpu::Surface, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
-        let surface = unsafe { instance.create_surface(&window) };
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: Default::default(),
+        });
+        let surface = unsafe { instance.create_surface(&window) }.unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -285,18 +291,20 @@ impl State {
             .unwrap();
 
         let size = window.inner_size();
+        let capablities = surface.get_capabilities(&adapter);
         let config = wgpu::SurfaceConfiguration {
-            alpha_mode: *surface.get_supported_alpha_modes(&adapter).first().unwrap(),
+            alpha_mode: *capablities.alpha_modes.first().unwrap(),
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: *surface.get_supported_formats(&adapter).first().unwrap(),
+            format: TextureFormat::Rgba8UnormSrgb,
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
+            view_formats: vec![TextureFormat::Rgba8UnormSrgb],
         };
         surface.configure(&device, &config);
 
         return (surface, device, queue, config);
-    }
+     }
 
 
 
@@ -310,6 +318,9 @@ impl State {
 
         let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
 
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("texture_buffer_copy_encoder"),
+        });
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
             #[cfg(debug_assertions)]
@@ -342,8 +353,8 @@ impl State {
 
                     let u32_size = std::mem::size_of::<u32>() as u32;
                     let tex_size = wgpu::Extent3d{
-                                height: bbox.0.1 as u32, // height
-                                width: bbox.0.0 as u32, // width
+                                height: bbox.1.1 as u32, // height
+                                width: bbox.1.0 as u32, // width
                                 depth_or_array_layers: 1
                             };
 
@@ -357,29 +368,27 @@ impl State {
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                                 | wgpu::TextureUsages::TEXTURE_BINDING
                                 | wgpu::TextureUsages::COPY_DST
-                                | wgpu::TextureUsages::COPY_SRC
+                                | wgpu::TextureUsages::COPY_SRC,
+                            view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
                     });
 
+                
                     // write from buffer
                     queue.write_texture(
-                        wgpu::ImageCopyTexture{
+                    wgpu::ImageCopyTexture{
                             texture: &tex,
                             mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
-                            aspect: wgpu::TextureAspect::All},
-
-                        &glpyh_data,
-
-                        wgpu::ImageDataLayout{
-                            offset: offset.try_into().unwrap(),
-                            bytes_per_row: 
-                                std::num::NonZeroU32::new(u32_size * (bbox.0.0 as u32)),
-                            rows_per_image: NonZeroU32::new(bbox.0.1 as u32)
+                            origin: default(),
+                            aspect: TextureAspect::All
                         },
-                        tex_size,
-                    );
-
-                    // create view for bindgroup
+                    &glpyh_data.as_slice(),
+                    ImageDataLayout{
+                        bytes_per_row: Some(4 * bbox.1.0 as u32),
+                        rows_per_image: Some(bbox.1.1 as u32),
+                        offset: offset as u64
+                    }, tex_size);
+                    
+                   // create view for bindgroup
                     let view = tex.create_view(&wgpu::TextureViewDescriptor { 
                         label: Some(&format!("tex view {}", glpyh)), 
                         format: Some(wgpu::TextureFormat::Rgba8UnormSrgb), 
@@ -453,9 +462,9 @@ impl State {
                                 buffer: &out,
                                 layout: wgpu::ImageDataLayout {
                                     bytes_per_row: 
-                                        std::num::NonZeroU32::new(image_row.next_multiple_of(256)),
+                                       Some(image_row.next_multiple_of(256)),
                                     offset: offset as u64,
-                                    rows_per_image: NonZeroU32::new(bbox.0.1 as u32)
+                                    rows_per_image: Some(bbox.0.1 as u32)
                                 },
                             },
                             tex_size,

@@ -6,13 +6,9 @@ use crate::font_atlas::packer::area_protect;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use num::Integer;
-use wgpu::CommandEncoder;
 use wgpu::CommandEncoderDescriptor;
 use wgpu::BufferDescriptor;
 use wgpu::Extent3d;
-use wgpu::MAP_ALIGNMENT;
-use wgpu::COPY_BUFFER_ALIGNMENT;
-use wgpu::Queue;
 use wgpu::TextureDimension;
 use wgpu::TextureUsages;
 use wgpu::TextureFormat;
@@ -24,14 +20,6 @@ const CHANNELS: u64 = 4;
 pub struct TermConfig{
     pub font_dir: String,
     pub font_size: f32
-}
-
-fn is_multiple_of(n : u128, multiple: u128) -> bool
-{
-    if n == 0 || multiple == 0 {
-        return false;
-    }
-    return n&(multiple - 1) == 0;
 }
 
 pub struct FontAtlas {
@@ -67,7 +55,8 @@ impl FontAtlas {
                 format: TextureFormat::Rgba8UnormSrgb, 
                 usage: TextureUsages::RENDER_ATTACHMENT |
                    TextureUsages::COPY_SRC |
-                   TextureUsages::COPY_DST
+                   TextureUsages::COPY_DST,
+                view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
             }
         );
 
@@ -86,7 +75,7 @@ impl FontAtlas {
                &pixel_box_data.as_slice(), 
                wgpu::ImageDataLayout { 
                    offset: 0, 
-                   bytes_per_row: NonZeroU32::new(pixels_bbox.width as u32 * 4), 
+                   bytes_per_row: Some(pixels_bbox.width as u32 * 4), 
                    rows_per_image: None 
                },
                wgpu::Extent3d{
@@ -118,8 +107,8 @@ impl FontAtlas {
                 buffer: &atlas_buf, 
                 layout: wgpu::ImageDataLayout {
                     offset: 0, 
-                    bytes_per_row: NonZeroU32::new((size.0 * u32_size).next_multiple_of(256) as u32),
-                    rows_per_image: NonZeroU32::new(size.1 as u32)
+                    bytes_per_row: Some((size.0 * u32_size).next_multiple_of(256) as u32),
+                    rows_per_image: Some(size.1 as u32)
                 }
             },
             Extent3d { 
@@ -220,7 +209,7 @@ impl FontAtlas {
         let mut pixels_boxes : Vec<(Vec<u8>, (BBox, (u64, u64)))> = Vec::new();
         for (glpyh, data) in pixels { 
             let mut position : Vec<(BBox, (u64, u64))> =
-                pos_boxes.clone().into_iter().filter(|(bbox, pos)| bbox.glpyh == glpyh).collect(); 
+                pos_boxes.clone().into_iter().filter(|(bbox, _pos)| bbox.glpyh == glpyh).collect(); 
             pixels_boxes.push((data, position.pop().unwrap()));            
         }
 
@@ -246,8 +235,11 @@ impl FontAtlas {
         
         // position
         let start = pos.0.0 * pos.0.1;
+        let start_buf = start.prev_multiple_of(&8);
+    
+        let end = start_buf + pos.1.0 * pos.1.1;
         // position plus width and height
-        let end = pos.0.0 + pos.1.0 * pos.0.1 + pos.1.1;
+        let end_buf = end.next_multiple_of(4);
 
         // we have increased bytes_per_row to a multiple of 256
         // buffer alignment requires it to start at MAP_ALIGNMENT
@@ -255,13 +247,15 @@ impl FontAtlas {
 
         // return glpyh data as slice and offset
         #[cfg(debug_assertions)]
-        println!("offsets start {} end {} width {} height {}",
-        start, end, pos.0.0, pos.0.1);
+        println!("offsets {} start {} end {} width {} height {}", 
+            end_buf.abs_diff(start_buf).abs_diff(end.abs_diff(start)),
+                start_buf, end_buf, pos.0.0, pos.0.1);
 
         // we don't know if aligned but we are anyway
         // not good.
         return (self.atlas.
-                slice(start.next_multiple_of(8)..end.next_multiple_of(4)),
-                0); 
+                slice(start_buf..end_buf), (
+                    end_buf.abs_diff(start_buf).abs_diff(end.abs_diff(start))
+                ) as u128); 
     }
 }
