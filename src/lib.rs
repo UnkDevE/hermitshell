@@ -6,9 +6,7 @@ pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
 
-use wgpu::Backend;
 use wgpu::ImageDataLayout;
-use wgpu::TextureAspect;
 use wgpu::TextureFormat;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
@@ -18,7 +16,6 @@ use winit::{
 };
 
 use core::slice::SlicePattern;
-use std::default::default;
 use std::iter;
 
 #[repr(C)] #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -68,8 +65,6 @@ pub struct ShellBuf {
 }
 
 use std::collections::HashMap;
-use std::num::NonZeroU32;
-
 
 pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
     let mut seen: HashMap<char, i32> = HashMap::new();
@@ -295,11 +290,11 @@ impl State {
         let config = wgpu::SurfaceConfiguration {
             alpha_mode: *capablities.alpha_modes.first().unwrap(),
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: TextureFormat::Rgba8UnormSrgb,
+            format: TextureFormat::Bgra8UnormSrgb,
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
-            view_formats: vec![TextureFormat::Rgba8UnormSrgb],
+            view_formats: vec![TextureFormat::Bgra8UnormSrgb],
         };
         surface.configure(&device, &config);
 
@@ -318,9 +313,6 @@ impl State {
 
         let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("texture_buffer_copy_encoder"),
-        });
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
             #[cfg(debug_assertions)]
@@ -353,8 +345,8 @@ impl State {
 
                     let u32_size = std::mem::size_of::<u32>() as u32;
                     let tex_size = wgpu::Extent3d{
-                                height: bbox.1.1 as u32, // height
-                                width: bbox.1.0 as u32, // width
+                                height: bbox.0.1 as u32, // height
+                                width: bbox.0.0 as u32, // width
                                 depth_or_array_layers: 1
                             };
 
@@ -364,34 +356,27 @@ impl State {
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
-                            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                            format: wgpu::TextureFormat::Bgra8UnormSrgb,
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                                 | wgpu::TextureUsages::TEXTURE_BINDING
-                                | wgpu::TextureUsages::COPY_DST
-                                | wgpu::TextureUsages::COPY_SRC,
-                            view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
+                                | wgpu::TextureUsages::COPY_DST,
+                            view_formats: &[],
                     });
-
                 
                     // write from buffer
                     queue.write_texture(
-                    wgpu::ImageCopyTexture{
-                            texture: &tex,
-                            mip_level: 0,
-                            origin: default(),
-                            aspect: TextureAspect::All
-                        },
-                    &glpyh_data.as_slice(),
-                    ImageDataLayout{
-                        bytes_per_row: Some(4 * bbox.1.0 as u32),
-                        rows_per_image: Some(bbox.1.1 as u32),
-                        offset: offset as u64
+                        tex.as_image_copy(),
+                        &glpyh_data,
+                        ImageDataLayout{
+                            bytes_per_row: Some(4 * bbox.0.0 as u32),
+                            rows_per_image: None,
+                            offset: offset as u64 
                     }, tex_size);
                     
                    // create view for bindgroup
                     let view = tex.create_view(&wgpu::TextureViewDescriptor { 
                         label: Some(&format!("tex view {}", glpyh)), 
-                        format: Some(wgpu::TextureFormat::Rgba8UnormSrgb), 
+                        format: Some(wgpu::TextureFormat::Bgra8UnormSrgb), 
                         dimension: Some(wgpu::TextureViewDimension::D2), 
                         aspect: wgpu::TextureAspect::All, 
                         base_mip_level: 0, 
@@ -464,7 +449,7 @@ impl State {
                                     bytes_per_row: 
                                        Some(image_row.next_multiple_of(256)),
                                     offset: offset as u64,
-                                    rows_per_image: Some(bbox.0.1 as u32)
+                                    rows_per_image: None
                                 },
                             },
                             tex_size,
