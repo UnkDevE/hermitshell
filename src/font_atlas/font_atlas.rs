@@ -4,7 +4,6 @@ use crate::font_atlas::packer::BBox;
 use crate::font_atlas::packer::area_protect;
 
 use std::collections::HashMap;
-use std::num::NonZeroU32;
 use num::Integer;
 use wgpu::CommandEncoderDescriptor;
 use wgpu::BufferDescriptor;
@@ -14,7 +13,6 @@ use wgpu::TextureUsages;
 use wgpu::TextureFormat;
 use wgpu::TextureDescriptor;
 
-const CHANNELS: u64 = 4;
 
 #[derive(Clone)]
 pub struct TermConfig{
@@ -41,7 +39,7 @@ impl FontAtlas {
         let mut enc = device.create_command_encoder(
             &CommandEncoderDescriptor { label: Some("font_atlas_enc") });
 
-        let mut font_atlas_tex = device.create_texture(
+        let font_atlas_tex = device.create_texture(
             &TextureDescriptor { 
                 label: Some("font_atlas_tex"), 
                 size: Extent3d{
@@ -52,11 +50,11 @@ impl FontAtlas {
                 mip_level_count: 1, 
                 sample_count: 1, 
                 dimension: TextureDimension::D2,
-                format: TextureFormat::Rgba8UnormSrgb, 
+                format: TextureFormat::Bgra8UnormSrgb, 
                 usage: TextureUsages::RENDER_ATTACHMENT |
                    TextureUsages::COPY_SRC |
                    TextureUsages::COPY_DST,
-                view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
+                view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb],
             }
         );
 
@@ -152,6 +150,7 @@ impl FontAtlas {
 
             #[cfg(debug_assertions)]
             {
+                let _ = 
                 image::save_buffer_with_format(format!("pure_glpyh_{}.png", glyph_c), 
                                                &(glyph.clone()), metrics.width as u32, metrics.height as u32, 
                                                image::ColorType::Rgb8, image::ImageFormat::Png);
@@ -164,19 +163,27 @@ impl FontAtlas {
                 pixel.push(255); // alpha
                 rgba.append(&mut pixel);
             }
-
             #[cfg(debug_assertions)]
             {
                 println!("rgba len {}", rgba.len());
+                let _ = 
                 image::save_buffer_with_format(format!("alpha_glpyh_{}.png", glyph_c), 
                                                &rgba.clone(), metrics.width as u32, metrics.height as u32, 
                                                image::ColorType::Rgba8, image::ImageFormat::Png);
             }
 
+            // convert rgba to bgra
+            let mut bgra: Vec<u8> = Vec::new(); 
+            for channel in rgba.chunks(4) {
+                let mut bgra_chunk = Vec::from(channel);
+                bgra_chunk.reverse();
+                bgra.append(&mut bgra_chunk);
+            }
+            
             // push pixel data 
             // null char has problems with encoding
             if  !(metrics.width == 0 || metrics.height == 0 || glyph_c == '\0') {
-                pixels.push((glyph_c, rgba));
+                pixels.push((glyph_c, bgra));
                 bboxes.push(BBox { glpyh: glyph_c, 
                     width: metrics.width as u64,
                     height: metrics.height as u64 });
@@ -234,11 +241,11 @@ impl FontAtlas {
         // calc start and end
         
         // position
-        let start = pos.0.0 * pos.0.1;
+        let start = pos.1.0 * pos.1.1;
         let start_buf = start.prev_multiple_of(&8);
     
-        let end = start_buf + pos.1.0 * pos.1.1;
-        // position plus width and height
+        // add w*h area 
+        let end = start_buf + pos.0.0 * pos.0.1;
         let end_buf = end.next_multiple_of(4);
 
         // we have increased bytes_per_row to a multiple of 256
@@ -252,7 +259,7 @@ impl FontAtlas {
                 start_buf, end_buf, pos.0.0, pos.0.1);
 
         // we don't know if aligned but we are anyway
-        // not good.
+        // but this is best guess, not good.
         return (self.atlas.
                 slice(start_buf..end_buf), (
                     end_buf.abs_diff(start_buf).abs_diff(end.abs_diff(start))

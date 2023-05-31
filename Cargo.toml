@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 
+anyhow = "1.0.71"
 portable-pty = "0.7.0"
 
 # gpu deps
@@ -13,7 +14,7 @@ winit = {version = "0.27"}
 env_logger = "0.9"
 log = "0.4"
 pollster = "0.2.5"
-wgpu = "0.16"
+wgpu = "0.16.1"
 
 # font deps
 fontdue = "0.7.2"
