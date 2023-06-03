@@ -6,8 +6,14 @@ pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
 
+<<<<<<< HEAD
+=======
+use wgpu::ImageCopyBuffer;
+use wgpu::ImageCopyTexture;
+>>>>>>> 3d4db18786e5079ae8c5a3b4dbdb4db48c725c89
 use wgpu::ImageDataLayout;
 use wgpu::TextureFormat;
+use wgpu::util::BufferInitDescriptor;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
 use winit::{
@@ -110,9 +116,11 @@ impl State {
 
                 use image::Rgba;
                 // save buffer image as file
-                //match 
+                // find next_multiple_of and then divide by bytes
+                let width = (font_atlas.atlas_size.0 * 4).next_multiple_of(256) / 4;
+                // match 
                 match image::ImageBuffer::
-                    <Rgba<u8>, _>::from_raw(font_atlas.atlas_size.0.next_multiple_of(256) as u32, 
+                    <Rgba<u8>, _>::from_raw(width as u32, 
                                             font_atlas.atlas_size.1 as u32, 
                      buf_data.as_slice()) {
                         Some(ibuf) => match ibuf.save("fontmap.png") {
@@ -350,7 +358,7 @@ impl State {
                                 depth_or_array_layers: 1
                             };
 
-                    let tex = device.create_texture(&wgpu::TextureDescriptor{
+                    let glpyh_tex = device.create_texture(&wgpu::TextureDescriptor{
                             label: Some(&format!("glpyh_tex {}", glpyh)),
                             size: tex_size,
                             mip_level_count: 1,
@@ -386,10 +394,8 @@ impl State {
                     });
 
                     // submit queue 
-                    let glpyh_buf_enc = 
-                        device.create_command_encoder(&CommandEncoderDescriptor{ 
-                            label: Some("glpyh_buf_enc") });
-                    queue.submit(iter::once(glpyh_buf_enc.finish()));
+                    // should only do this once in future revisions
+                    queue.submit(iter::once(glpyh_encoder.finish()));
 
                     // write texture to bindgroup using device.
                     glpyhs.insert(*glpyh, device.create_bind_group(
@@ -436,10 +442,11 @@ impl State {
                    
                         
                         // save texture as image
+                        // this doesn't work either
                         glpyh_dbg_enc.copy_texture_to_buffer(
                             wgpu::ImageCopyTexture {
                                 aspect: wgpu::TextureAspect::All,
-                                texture: &tex,
+                                texture: &glpyh_tex,
                                 mip_level: 0,
                                 origin: wgpu::Origin3d::ZERO,
                             },
@@ -448,7 +455,11 @@ impl State {
                                 layout: wgpu::ImageDataLayout {
                                     bytes_per_row: 
                                        Some(image_row.next_multiple_of(256)),
+<<<<<<< HEAD
                                     offset: offset as u64,
+=======
+                                    offset: 0,
+>>>>>>> 3d4db18786e5079ae8c5a3b4dbdb4db48c725c89
                                     rows_per_image: None
                                 },
                             },

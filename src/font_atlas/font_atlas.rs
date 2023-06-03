@@ -183,7 +183,7 @@ impl FontAtlas {
             // push pixel data 
             // null char has problems with encoding
             if  !(metrics.width == 0 || metrics.height == 0 || glyph_c == '\0') {
-                pixels.push((glyph_c, rgba));
+                pixels.push((glyph_c, bgra));
                 bboxes.push(BBox { glpyh: glyph_c, 
                     width: metrics.width as u64,
                     height: metrics.height as u64 });
