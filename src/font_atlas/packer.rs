@@ -47,6 +47,11 @@ fn get_min_size(bboxes: Vec<BBox>) -> Point {
             return acc;
     });
 
+    #[cfg(debug_assertions)]
+    {
+        println!("min size {}", area.sqrt())
+    }
+
     use num::integer::Roots;
     return (area.sqrt(), area.sqrt());
 }
@@ -141,7 +146,7 @@ fn search_lines(rect: BBox, xlines: &mut Vec<Line>,
 }
 
 // makes a new line from the rectangle that does not fit
-fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
+fn create_layer(rect: BBox, xlines: &mut Vec<Line>, xlines_start : Line) -> Line {
     // sort by width
     xlines.sort_by(|line_a, line_b| {
         return area_ord(area_protect_abs(line_a[2] - line_a[1]) as u64,
@@ -150,6 +155,9 @@ fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
 
     // this returns an Err as None, which must not happen
     let mut longest_line = xlines.last().unwrap().clone();
+    if longest_line[1] < xlines_start[1] {
+        longest_line[1] = xlines_start[1]
+    }
 
     // set height to rects height
     let u_height : i64 = rect.height.try_into().unwrap();
@@ -160,6 +168,16 @@ fn create_layer(rect: BBox, xlines: &mut Vec<Line>) -> Line {
     longest_line[3] += u_height;
     longest_line[4] = 1;
 
+    #[cfg(debug_assertions)]
+    {
+        println!("creating new layer {} {} {} {} {}",
+                 longest_line[0],
+                 longest_line[1],
+                 longest_line[2],
+                 longest_line[3],
+                 longest_line[4]);
+        println!("rect size {} {}", rect.width, rect.height);
+    }
     xlines.push(longest_line);
     return longest_line;
 }
@@ -189,9 +207,9 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
         xlines[line_idx][4] = -1;
         return None;
     }
-
+    // doesn't fit with placement
     // search placements in line
-    if let Some(new_pos) = placements.clone()
+    else if let Some(new_pos) = placements.clone()
         .into_iter()
         .filter(|place| if let Some(place) = xlines.clone().get(place.line_idx) { 
                 place == &line 
@@ -203,9 +221,10 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
             |s, place| {
                 if let Some(mut acc) = s {
                     // check if there is a leftmost point already stored
+                    // we iterate over places here so 
+                    // acc must increment over each place
                     if acc.0 < place.pos.0 {
-                        // set start pos to that point
-                        acc.0 = place.pos.0 + rect.width;
+                        acc.0 += place.pos.0;
                     }
                     return Some(acc);
                 }
@@ -214,13 +233,19 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
                 }
             }) 
     {
-        if new_pos.0 < line[1] as u64 {
+        if new_pos.0 + rect.width <= line[1] as u64 {
+            #[cfg(debug_assertions)]
+            {
+                println!("find_leftmost pos ({}, {})",
+                    new_pos.0, new_pos.1);
+            }
             placements.push(Placement {
-                bbox: rect,
+                bbox: rect.clone(),
                 pos: new_pos,
                 line_idx
             });
             xlines[line_idx][0] = new_pos.0 as i64;
+            xlines[line_idx][1] = (new_pos.0 + rect.width) as i64;
             xlines[line_idx][2] = new_pos.1 as i64;
             return Some(new_pos);
         }
@@ -436,16 +461,16 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
         let selected_line = search_lines(rect.clone(), 
                                          &mut xlines, &mut placements)
             .unwrap_or_else(|| {
-            create_layer(rect.to_owned(), &mut xlines);
+            create_layer(rect.to_owned(), &mut xlines, xlines_start[0]);
             return xlines.len() - 1;
         });
 
         // fifth step
         // update selected line to selected rect
         // if no line fit create one
-        let mut pos = find_leftmost(&mut placements, rect.clone(), 
+        find_leftmost(&mut placements, rect.clone(), 
                       &mut xlines, selected_line).unwrap_or_else(|| {
-            create_layer(rect.to_owned(), &mut xlines);
+            create_layer(rect.to_owned(), &mut xlines, xlines_start[0]);
             let selected_line = xlines.len() - 1;
             return find_leftmost(
                 &mut placements, rect.to_owned(), 

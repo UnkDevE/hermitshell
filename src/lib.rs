@@ -6,14 +6,8 @@ pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
 
-<<<<<<< HEAD
-=======
-use wgpu::ImageCopyBuffer;
-use wgpu::ImageCopyTexture;
->>>>>>> 3d4db18786e5079ae8c5a3b4dbdb4db48c725c89
 use wgpu::ImageDataLayout;
 use wgpu::TextureFormat;
-use wgpu::util::BufferInitDescriptor;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
 use winit::{
@@ -373,7 +367,7 @@ impl State {
                 
                     // write from buffer
                     queue.write_texture(
-                        tex.as_image_copy(),
+                        glpyh_tex.as_image_copy(),
                         &glpyh_data,
                         ImageDataLayout{
                             bytes_per_row: Some(4 * bbox.0.0 as u32),
@@ -382,7 +376,7 @@ impl State {
                     }, tex_size);
                     
                    // create view for bindgroup
-                    let view = tex.create_view(&wgpu::TextureViewDescriptor { 
+                    let view = glpyh_tex.create_view(&wgpu::TextureViewDescriptor { 
                         label: Some(&format!("tex view {}", glpyh)), 
                         format: Some(wgpu::TextureFormat::Bgra8UnormSrgb), 
                         dimension: Some(wgpu::TextureViewDimension::D2), 
@@ -392,6 +386,9 @@ impl State {
                         base_array_layer: 0, 
                         array_layer_count: None 
                     });
+
+                    let glpyh_encoder = device.create_command_encoder(
+                        &CommandEncoderDescriptor { label: Some(&format!("glpyh enc {}", glpyh))});
 
                     // submit queue 
                     // should only do this once in future revisions
@@ -455,11 +452,7 @@ impl State {
                                 layout: wgpu::ImageDataLayout {
                                     bytes_per_row: 
                                        Some(image_row.next_multiple_of(256)),
-<<<<<<< HEAD
                                     offset: offset as u64,
-=======
-                                    offset: 0,
->>>>>>> 3d4db18786e5079ae8c5a3b4dbdb4db48c725c89
                                     rows_per_image: None
                                 },
                             },
