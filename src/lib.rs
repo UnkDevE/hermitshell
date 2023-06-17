@@ -1,3 +1,7 @@
+/*
+ * This needs a rewrite to resturcture functions 
+ * into more sizable and readable blocks.
+ */
 #![feature(int_roundings)]
 #![feature(iter_intersperse)]
 #![feature(slice_pattern)]
@@ -361,18 +365,35 @@ impl State {
                             format: wgpu::TextureFormat::Bgra8UnormSrgb,
                             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                                 | wgpu::TextureUsages::TEXTURE_BINDING
-                                | wgpu::TextureUsages::COPY_DST,
-                            view_formats: &[],
+                                | wgpu::TextureUsages::COPY_DST
+                                | wgpu::TextureUsages::COPY_SRC,
+                            view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb],
                     });
-                
+
+                    // correct offsets here so we don't have to in write_texture
+                    use image::Rgba;
+                    let no_off_data = glpyh_data.split_at(offset as usize).1;
+
+                    #[cfg(debug_assertions)]
+                    {
+                        println!("bbox size ({}, {})", bbox.0.0, bbox.0.1);
+                        println!("glpyh_data size in bytes {}", glpyh_data.len());
+                        println!("no_off_data {} size {}", no_off_data.len(), bbox.0.0 * bbox.0.1);
+                    }
+
+                    let glpyh_image = 
+                        image::ImageBuffer::<Rgba<u8>, _>::
+                        from_raw(bbox.0.0 as u32, bbox.0.1 as u32,
+                                                  no_off_data).unwrap(); 
+
                     // write from buffer
                     queue.write_texture(
                         glpyh_tex.as_image_copy(),
-                        &glpyh_data,
+                        &glpyh_image.as_slice(),
                         ImageDataLayout{
-                            bytes_per_row: Some(4 * bbox.0.0 as u32),
+                            bytes_per_row: Some(bbox.0.0 as u32 * 4),
                             rows_per_image: None,
-                            offset: offset as u64 
+                            offset: 0 
                     }, tex_size);
                     
                    // create view for bindgroup
@@ -416,17 +437,17 @@ impl State {
 
                     #[cfg(debug_assertions)]
                     {
-                        let image_row = u32_size * bbox.0.0 as u32;
+                        let image_row = (u32_size * bbox.0.0 as u32).next_multiple_of(256) as u32;
                         let image_size = image_row * bbox.0.1 as u32;
 
-                        let output_buffer_size : u64 = image_size.next_multiple_of(256) as u64 * bbox.0.1;
+                        let output_buffer_size : u64 = image_size as u64;
 
                         let out_desc = wgpu::BufferDescriptor {
                             size: output_buffer_size,
                             usage: wgpu::BufferUsages::COPY_DST
                                 // this tells wpgu that we want to read this buffer from the cpu
                                 | wgpu::BufferUsages::MAP_READ,
-                            label: None,
+                            label: Some("output buffer for debugging glpyhs that have been loaded"),
                             mapped_at_creation: true,
                         };
 
@@ -451,9 +472,9 @@ impl State {
                                 buffer: &out,
                                 layout: wgpu::ImageDataLayout {
                                     bytes_per_row: 
-                                       Some(image_row.next_multiple_of(256)),
+                                       Some(image_row),
                                     offset: offset as u64,
-                                    rows_per_image: None
+                                    rows_per_image: Some(bbox.0.1 as u32)
                                 },
                             },
                             tex_size,

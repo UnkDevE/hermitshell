@@ -216,7 +216,7 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
             } 
             else { 
                 return false;
-            }).fold(Some((line[0] as u64 + rect.width, line[2] as u64)),
+            }).fold(Some((line[0] as u64 + rect.width, line[3] as u64)),
 
             |s, place| {
                 if let Some(mut acc) = s {
@@ -244,9 +244,8 @@ fn find_leftmost(placements: &mut Vec<Placement>, rect: BBox,
                 pos: new_pos,
                 line_idx
             });
-            xlines[line_idx][0] = new_pos.0 as i64;
-            xlines[line_idx][1] = (new_pos.0 + rect.width) as i64;
-            xlines[line_idx][2] = new_pos.1 as i64;
+            xlines[line_idx][0] = (new_pos.0 + rect.width) as i64;
+            xlines[line_idx][2] = (new_pos.1 + rect.height) as i64;
             return Some(new_pos);
         }
     }
@@ -509,11 +508,12 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
            (xlines[0][1] as u64 * (xlines[0][3] + 
               (xlines.last().unwrap_or(&xlines[0])[1])) as u64),
            xlines.len(), min_size.0 * min_size.1);
-    return (
-        (xlines[0][1] as u64, 
-         xlines[0][3] as u64),
+
+    let size = (((xlines.last().unwrap_or(&xlines[0])[1]) as u64),
+         ((xlines.last().unwrap_or(&xlines[0])[2]) as u64));
+
+    return (size,
             placements.into_iter()
                 .map(|place| ((place.bbox, place.pos)))
-                .collect()
-    );
+                .collect());
 }

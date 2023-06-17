@@ -58,6 +58,11 @@ impl FontAtlas {
             }
         );
 
+        #[cfg(debug_assertions)]
+        {
+            println!("Size of atlas: ({}, {})", size.0, size.1);
+        }
+
         for (pixel_box_data, (pixels_bbox, pos_pixels)) in pixels_boxes { 
              queue.write_texture(
                  wgpu::ImageCopyTextureBase {
@@ -241,12 +246,13 @@ impl FontAtlas {
         // calc start and end
         
         // position
+        // DO NOT FORGET TO MULTIPLE BY CHANNELS
         let start = pos.1.0 * pos.1.1;
-        let start_buf = start.prev_multiple_of(&8);
+        let start_buf = start.prev_multiple_of(&8) * 4;
     
         // add w*h area 
         let end = start_buf + pos.0.0 * pos.0.1;
-        let end_buf = end.next_multiple_of(4);
+        let end_buf = end.next_multiple_of(4) * 4;
 
         // we have increased bytes_per_row to a multiple of 256
         // buffer alignment requires it to start at MAP_ALIGNMENT
