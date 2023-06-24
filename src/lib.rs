@@ -371,29 +371,23 @@ impl State {
                     });
 
                     // correct offsets here so we don't have to in write_texture
-                    use image::Rgba;
-                    let no_off_data = glpyh_data.split_at(offset as usize).1;
+                    // let no_off_data = glpyh_data.split_at(offset as usize).1;
 
                     #[cfg(debug_assertions)]
                     {
                         println!("bbox size ({}, {})", bbox.0.0, bbox.0.1);
                         println!("glpyh_data size in bytes {}", glpyh_data.len());
-                        println!("no_off_data {} size {}", no_off_data.len(), bbox.0.0 * bbox.0.1);
+                        // println!("no_off_data {} size {}", no_off_data.len(), bbox.0.0 * bbox.0.1);
                     }
-
-                    let glpyh_image = 
-                        image::ImageBuffer::<Rgba<u8>, _>::
-                        from_raw(bbox.0.0 as u32, bbox.0.1 as u32,
-                                                  no_off_data).unwrap(); 
 
                     // write from buffer
                     queue.write_texture(
                         glpyh_tex.as_image_copy(),
-                        &glpyh_image.as_slice(),
+                        &glpyh_data,
                         ImageDataLayout{
                             bytes_per_row: Some(bbox.0.0 as u32 * 4),
                             rows_per_image: None,
-                            offset: 0 
+                            offset: 0 // we deal with offset in off_data
                     }, tex_size);
                     
                    // create view for bindgroup
@@ -437,7 +431,7 @@ impl State {
 
                     #[cfg(debug_assertions)]
                     {
-                        let image_row = (u32_size * bbox.0.0 as u32).next_multiple_of(256) as u32;
+                        let image_row = (u32_size * bbox.0.0 as u32).next_multiple_of(256);
                         let image_size = image_row * bbox.0.1 as u32;
 
                         let output_buffer_size : u64 = image_size as u64;
@@ -471,16 +465,15 @@ impl State {
                             wgpu::ImageCopyBuffer {
                                 buffer: &out,
                                 layout: wgpu::ImageDataLayout {
-                                    bytes_per_row: 
-                                       Some(image_row),
-                                    offset: offset as u64,
-                                    rows_per_image: Some(bbox.0.1 as u32)
+                                    bytes_per_row: Some(image_row), 
+                                    offset: offset as u64, 
+                                    rows_per_image: None,
                                 },
                             },
                             tex_size,
                         );
 
-                        let tex_data = out.slice((offset as u64)..(image_size as u64)).get_mapped_range();
+                        let tex_data = out.slice(0..output_buffer_size).get_mapped_range();
                         image::save_buffer_with_format(format!("glpyh_{}.png", glpyh), &tex_data, bbox.0.0 as u32,
                                 bbox.0.1 as u32, image::ColorType::Rgba8, image::ImageFormat::Png).unwrap_or({});
 

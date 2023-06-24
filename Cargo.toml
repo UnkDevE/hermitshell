@@ -20,9 +20,9 @@ wgpu = "0.16.1"
 fontdue = "0.7.2"
 
 # async deps
+bytemuck_derive = "1.4.0"
 futures-intrusive = "0.4.1"
-bytemuck = {version = "1.12.3", features = ["derive"]}
-
+bytemuck = {version = "1.13.1", features = ["derive"]}
 # generic deps
 num = {version = "0.4.0"}
 

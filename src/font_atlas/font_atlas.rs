@@ -79,7 +79,7 @@ impl FontAtlas {
                wgpu::ImageDataLayout { 
                    offset: 0, 
                    bytes_per_row: Some(pixels_bbox.width as u32 * 4), 
-                   rows_per_image: None 
+                   rows_per_image: Some(pixels_bbox.height as u32) 
                },
                wgpu::Extent3d{
                     width: pixels_bbox.width as u32,
@@ -247,12 +247,12 @@ impl FontAtlas {
         
         // position
         // DO NOT FORGET TO MULTIPLE BY CHANNELS
-        let start = pos.1.0 * pos.1.1;
-        let start_buf = start.prev_multiple_of(&8) * 4;
+        let start = pos.1.0 * pos.1.1 * 4;
+        let start_buf = start.prev_multiple_of(&8);
     
         // add w*h area 
-        let end = start_buf + pos.0.0 * pos.0.1;
-        let end_buf = end.next_multiple_of(4) * 4;
+        let end = start_buf + pos.0.0 * pos.0.1 * 4;
+        let end_buf = end.next_multiple_of(4);
 
         // we have increased bytes_per_row to a multiple of 256
         // buffer alignment requires it to start at MAP_ALIGNMENT
