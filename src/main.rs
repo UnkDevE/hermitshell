@@ -37,7 +37,7 @@ pub async fn run(){
     let pty_system = native_pty_system();
     // TODO: set pixel size to font size
     let mut pty_pair = pty_system.openpty(
-        PtySize { rows: 80, cols: 24, pixel_width: 0, pixel_height: 0})
+        PtySize { rows: 80, cols: 24, pixel_width: 18, pixel_height: 18})
             .unwrap();
 
     // setup window

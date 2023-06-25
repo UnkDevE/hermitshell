@@ -4,8 +4,7 @@
  */
 #![feature(int_roundings)]
 #![feature(iter_intersperse)]
-#![feature(slice_pattern)]
-#![feature(default_free_fn)]
+#![feature(slice_pattern)] #![feature(default_free_fn)]
 pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
@@ -474,7 +473,7 @@ impl State {
                         );
 
                         let tex_data = out.slice(0..output_buffer_size).get_mapped_range();
-                        image::save_buffer_with_format(format!("glpyh_{}.png", glpyh), &tex_data, bbox.0.0 as u32,
+                        image::save_buffer_with_format(format!("glpyh_{}.png", glpyh), &tex_data, bbox.0.0.next_multiple_of(256) as u32,
                                 bbox.0.1 as u32, image::ColorType::Rgba8, image::ImageFormat::Png).unwrap_or({});
 
                     }
@@ -534,6 +533,11 @@ impl State {
                 // if start smaller than bbox then set as bbox 
                 if start.1 < bbox_normalized.1 { start.1 = bbox_normalized.1}
 
+                #[cfg(debug_assertions)]{
+                    println!("bbox normalized for rendered glpyh: ({}, {})",
+                        bbox_normalized.0, bbox_normalized.1);
+                }
+
                 // create coords:
                 // start pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[
@@ -589,7 +593,7 @@ impl State {
                                 g: 0.0,
                                 r: 0.0,
                                 b: 0.0,
-                                a: 1.0,
+                                a: 0.0,
                             }),
                             store: true,
                         },
@@ -605,8 +609,8 @@ impl State {
 
                 for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
                     
-                    // #[cfg(debug_assertions)]
-                    // println!("chr {} printed to shell", chr);
+                     #[cfg(debug_assertions)]
+                     println!("chr {} printed to shell", chr);
                     if chr != ' ' {
                         if let Some(glpyh) = self.glpyhs.get(&chr) {
                             if let Some(pixels) = 
@@ -615,6 +619,8 @@ impl State {
                                 render_pass.set_vertex_buffer(0, 
                                                               pixels.slice(..));
                                 render_pass.draw(0..4, 0..1);
+                                #[cfg(debug_assertions)]
+                                println!("pixels rendered for glpyh {}", &chr);
                             }
                         }
                     }
