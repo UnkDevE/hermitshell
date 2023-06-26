@@ -129,7 +129,7 @@ pub async fn run(){
         },
         Event::RedrawRequested(win_id) if win_id == window.id() =>{
             state.update();
-            match state.render() {
+            match pollster::block_on(state.render()) {
                 Ok(_) => {}
                 // Reconfigure the surface if lost
                 Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
