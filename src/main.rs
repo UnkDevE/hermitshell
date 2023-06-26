@@ -63,6 +63,8 @@ pub async fn run(){
     
     // impl state
     let mut state = State::new(&window, TermConfig {font_dir, font_size: 18.0}).await;
+    println!("GLPYH DEBUG STARTED");
+    state.debug_glpyhs().await;
 
     // make buffers
     let mut command_str = read_from_pty(&mut reader);
@@ -129,7 +131,7 @@ pub async fn run(){
         },
         Event::RedrawRequested(win_id) if win_id == window.id() =>{
             state.update();
-            match pollster::block_on(state.render()) {
+            match state.render() {
                 Ok(_) => {}
                 // Reconfigure the surface if lost
                 Err(wgpu::SurfaceError::Lost) => state.resize(state.size),

@@ -15,6 +15,7 @@ env_logger = "0.9"
 log = "0.4"
 pollster = "0.2.5"
 wgpu = "0.16.1"
+wgpu-types = "0.16.0"
 
 # font deps
 fontdue = "0.7.2"

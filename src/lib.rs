@@ -60,7 +60,7 @@ pub struct State {
     pub font_atlas: FontAtlas,
     glpyhs: HashMap<char, wgpu::BindGroup>,
     pub shell_buf : ShellBuf,
-    on_startup: bool,
+    term_config: TermConfig,
 }
 
 pub struct ShellBuf {
@@ -134,7 +134,7 @@ impl State {
         }
 
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
-            Self::make_render_pipeline(&mut device, &config);
+            Self::make_render_pipeline(&mut device, config.format); 
 
         let glpyhs = Self::make_glpyhs(&mut device, &mut queue, 
                                        &font_atlas, glpyh_sampler, glpyh_layout).await;
@@ -151,13 +151,12 @@ impl State {
                 shell_buf: ShellBuf{
                     string_buf: String::new(), glpyhs_pos: vec![]
                 },
-                glpyhs,
-                on_startup: true,
+                glpyhs,term_config
            };
     }
             
     pub fn make_render_pipeline(device: &mut wgpu::Device, 
-                                 config: &wgpu::SurfaceConfiguration) -> 
+                                 config: TextureFormat) ->
          (RenderPipeline, wgpu::Sampler, wgpu::BindGroupLayout) {
         
         let glpyh_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -220,7 +219,7 @@ impl State {
                 module: &shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format: config,
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent::REPLACE,
                         alpha: wgpu::BlendComponent::REPLACE,
@@ -264,6 +263,7 @@ impl State {
             backends: wgpu::Backends::all(),
             dx12_shader_compiler: Default::default(),
         });
+
         let surface = unsafe { instance.create_surface(&window) }.unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -277,7 +277,7 @@ impl State {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    label: Some("lib adapter"),
+                    label: Some("terminal adapter"),
                     features: wgpu::Features::empty(),
                     // WebGL doesn't support all of wgpu's features, so if
                     // we're building for the web we'll have to disable some.
@@ -287,7 +287,9 @@ impl State {
                         wgpu::Limits::default()
                     },
                 },
-                // Some(&std::path::Path::new("trace")), // Trace path
+                #[cfg(debug_assertions)]
+                None, // Some(&std::path::Path::new("trace")), // Trace path
+                #[cfg(not(debug_assertions))]
                 None,
             )
             .await
@@ -296,12 +298,9 @@ impl State {
         let size = window.inner_size();
         let capablities = surface.get_capabilities(&adapter);
 
-        // in release no COPY_DST for render debugging
-        #[cfg(not(debug_assertions))]
         let config = wgpu::SurfaceConfiguration {
             alpha_mode: *capablities.alpha_modes.first().unwrap(),
             usage: 
-                wgpu::TextureUsages::COPY_DST |
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: TextureFormat::Bgra8UnormSrgb,
             width: size.width,
@@ -309,19 +308,6 @@ impl State {
             present_mode: wgpu::PresentMode::Fifo,
             view_formats: vec![TextureFormat::Bgra8UnormSrgb],
         };
-        #[cfg(debug_assertions)]
-        let config = wgpu::SurfaceConfiguration {
-            alpha_mode: *capablities.alpha_modes.first().unwrap(),
-            usage: 
-                wgpu::TextureUsages::COPY_DST |
-                wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: TextureFormat::Bgra8UnormSrgb,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
-            view_formats: vec![TextureFormat::Bgra8UnormSrgb],
-        };
-
         surface.configure(&device, &config);
         return (surface, device, queue, config);
      }
@@ -532,148 +518,198 @@ impl State {
         }
     }
 
-    pub async fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    // BIG OVERHEAD, creates copy of renderpipline to debug glpyh usage
+    pub async fn debug_glpyhs(&mut self) {
+       let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: Default::default(),
+        });
+
+        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions{
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }).await.unwrap();
+
+        // we use theese instead of self so we can copy over 
+        let (mut device, mut queue) = adapter.request_device(&Default::default(),
+            None).await.unwrap();
+
+        let texture_size = self.font_atlas.lookup.values().fold(0, |init, acc| {
+            let size = (acc.0.0 * acc.0.1) as u32;
+            if init < size { return size }
+            return init;
+        });
+
+        let texture_desc = wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: texture_size,
+                height: texture_size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                ,
+            label: None,
+            view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb]
+        };
+
+        let (render_pipeline, glpyh_sampler, glpyh_layout) = 
+            Self::make_render_pipeline(&mut device, texture_desc.format);
+
+        
+        // repopulate hashmap in font_atlas
+        let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
+                                        &mut queue);
+        // create second set of bindgroups HOT call
+        let glpyhs = 
+            pollster::block_on(Self::make_glpyhs(&mut device, &mut queue, 
+                              &font_atlas, glpyh_sampler, glpyh_layout));
+
+        let texture = device.create_texture(&texture_desc);
+        let texture_view = texture.create_view(&Default::default());
+
+        // we need this for saving images later
+        let tex_size = (4 * texture.width()).next_multiple_of(256) * texture.height();
+        let glpyh_dgb_buf_desc = wgpu::BufferDescriptor {
+            size: tex_size as u64,
+            usage: wgpu::BufferUsages::COPY_DST
+                // this tells wpgu that we want to read this buffer from the cpu
+                | wgpu::BufferUsages::MAP_READ,
+            label: None,
+            mapped_at_creation: false,
+        };
+         
+         // create coords:
+        // start pos , bbox width + pos, bbox height + height
+        let glpyh_vert: &[Vertex] = &[
+            Vertex { position: [0.0, 0.0, 0.0],
+            tex_coords: [0.0, 0.0], }, // b lh corner
+            Vertex { position: [0.0, 1.0
+                , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
+            Vertex { position: [1.0, 0.0
+                ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+            Vertex { position: [1.0, 0.0, 0.0], tex_coords: [1.0,1.0], 
+            },
+            // t rh corner
+        ];
+
+        // create buffer for position
+        let glpyh_positions = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor { 
+                label: Some("dgb buffer"),
+                contents: bytemuck::cast_slice(glpyh_vert),
+                usage: wgpu::BufferUsages::VERTEX,
+        });
+
+
+        for (glpyh, bindgroup) in glpyhs {
+            let mut encoder = device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Debug Encoder"),
+            });
+            // encap for secuirty
+            {
+                let mut render_pass = encoder.begin_render_pass(
+                    &wgpu::RenderPassDescriptor {
+                        label: Some("Render Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &texture_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    g: 0.0,
+                                    r: 0.0,
+                                    b: 0.0,
+                                    a: 0.0,
+                                }),
+                                store: true,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                    });
+                render_pass.set_pipeline(&render_pipeline);
+                println!("rendering glpyh {} for dgb", glpyh);
+
+                // hack into render pipeline to render glpyh for dbg purposes
+                render_pass.set_bind_group(0, &bindgroup, &[]);
+                render_pass.set_vertex_buffer(0, glpyh_positions.slice(..));
+                render_pass.draw(0..4, 0..1);
+                println!("glpyh drawn");
+            }
+
+            // submit
+            queue.submit(iter::once(encoder.finish()));
+        
+            // don't present output
+            let glpyh_dbg_buf = device.create_buffer(&glpyh_dgb_buf_desc);
+
+            // recreate encoder for copying buffers
+            encoder = device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Copy Debug Encoder"),
+            });
+            
+            // save into buf from texture
+            let width = texture.width();
+            encoder.copy_texture_to_buffer(
+                texture.as_image_copy(),
+                wgpu::ImageCopyBuffer {
+                    buffer: &glpyh_dbg_buf,
+                    layout: wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some((4 * width).next_multiple_of(256)),
+                        rows_per_image: None,
+                    },
+                },
+                texture.size());
+
+            // submit copy
+            queue.submit(iter::once(encoder.finish()));
+
+            println!("glpyh copied to buf");
+
+            // pull out the image from buffer
+            {
+                let buffer_slice = glpyh_dbg_buf.slice(..);
+                
+                // NOTE: We have to create the mapping THEN device.poll() before await
+                // the future. Otherwise the application will freeze.
+                let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+                buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                    tx.send(result).unwrap();
+                });
+                device.poll(wgpu::Maintain::Wait);
+                rx.receive().await.unwrap().unwrap();
+
+                let data = buffer_slice.get_mapped_range();
+
+                // save the glpyh to .png
+                use image::{ImageBuffer, Rgba};
+                let width = (texture.width() * 4).next_multiple_of(256).div_ceil(4);
+                let buffer =
+                    ImageBuffer::<Rgba<u8>, _>::from_raw(width, 
+                                                         texture.height(),
+                                                         data).unwrap();
+                buffer.save(format!("glpyh_{}.png", glpyh)).unwrap();
+                println!("glpyh {} saved as glpyh_{}.png", glpyh, glpyh); 
+            }
+        }
+    }                   
+
+
+
+    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-         #[cfg(debug_assertions)]
-        {
-
-            // runs once only
-            if self.on_startup {
-                // we need this for saving images later
-                let tex_size = (4 * output.texture.width()) * output.texture.height();
-                let glpyh_dgb_buf_desc = wgpu::BufferDescriptor {
-                    size: tex_size as u64,
-                    usage: wgpu::BufferUsages::COPY_DST
-                        // this tells wpgu that we want to read this buffer from the cpu
-                        | wgpu::BufferUsages::MAP_READ,
-                    label: None,
-                    mapped_at_creation: false,
-                };
-                 
-                 // create coords:
-                // start pos , bbox width + pos, bbox height + height
-                let glpyh_vert: &[Vertex] = &[
-                    Vertex { position: [0.0, 0.0, 0.0],
-                    tex_coords: [0.0, 0.0], }, // b lh corner
-                    Vertex { position: [0.0, 1.0
-                        , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-                    Vertex { position: [1.0, 0.0
-                        ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
-                    Vertex { position: [1.0, 0.0, 0.0], tex_coords: [1.0,1.0], 
-                    },
-                    // t rh corner
-                ];
-
-                // create buffer for position
-                let glpyh_positions = self.device.create_buffer_init(
-                    &wgpu::util::BufferInitDescriptor { 
-                        label: Some("dgb buffer"),
-                        contents: bytemuck::cast_slice(glpyh_vert),
-                        usage: wgpu::BufferUsages::VERTEX,
-                });
-
-
-                for (glpyh, bindgroup) in &self.glpyhs {
-                    let mut encoder = self
-                            .device
-                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Render Debug Encoder"),
-                    });
-                    // encap for secuirty
-                    {
-                        let mut render_pass = encoder.begin_render_pass(
-                            &wgpu::RenderPassDescriptor {
-                                label: Some("Render Pass"),
-                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                    view: &view,
-                                    resolve_target: None,
-                                    ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                                            g: 0.0,
-                                            r: 0.0,
-                                            b: 0.0,
-                                            a: 0.0,
-                                        }),
-                                        store: true,
-                                    },
-                                })],
-                                depth_stencil_attachment: None,
-                            });
-                        render_pass.set_pipeline(&self.render_pipeline);
-                        println!("rendering glpyh {} for dgb", glpyh);
-
-                        // hack into render pipeline to render glpyh for dbg purposes
-                        render_pass.set_bind_group(0, &bindgroup, &[]);
-                        render_pass.set_vertex_buffer(0, glpyh_positions.slice(..));
-                        render_pass.draw(0..4, 0..1);
-                        println!("glpyh drawn");
-                    }
-
-                    // submit
-                    self.queue.submit(iter::once(encoder.finish()));
-                
-                    // don't present output
-                    let glpyh_dbg_buf = self.device.create_buffer(&glpyh_dgb_buf_desc);
-
-                    // recreate encoder for copying buffers
-                    encoder = self
-                            .device
-                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Copy Debug Encoder"),
-                    });
-                    
-                    // save into buf from texture
-                    let width = output.texture.width();
-                    encoder.copy_texture_to_buffer(
-                        output.texture.as_image_copy(),
-                        wgpu::ImageCopyBuffer {
-                            buffer: &glpyh_dbg_buf,
-                            layout: wgpu::ImageDataLayout {
-                                offset: 0,
-                                bytes_per_row: Some(4 * width),
-                                rows_per_image: None,
-                            },
-                        },
-                        output.texture.size());
-
-                    // submit copy
-                    self.queue.submit(iter::once(encoder.finish()));
-
-                    println!("glpyh copied to buf");
-
-                    // pull out the image from buffer
-                    {
-                        let buffer_slice = glpyh_dbg_buf.slice(..);
-                        
-                        // NOTE: We have to create the mapping THEN device.poll() before await
-                        // the future. Otherwise the application will freeze.
-                        let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-                        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                            tx.send(result).unwrap();
-                        });
-                        self.device.poll(wgpu::Maintain::Wait);
-                        rx.receive().await.unwrap().unwrap();
-
-                        let data = buffer_slice.get_mapped_range();
-
-                        // save the glpyh to .png
-                        use image::{ImageBuffer, Rgba};
-                        let buffer =
-                            ImageBuffer::<Rgba<u8>, _>::from_raw(output.texture.width(), 
-                                                                 output.texture.height(),
-                                                                 data).unwrap();
-                        buffer.save(format!("glpyh_{}.png", glpyh)).unwrap();
-                        println!("glpyh {} saved as glpyh_{}.png", glpyh, glpyh); 
-                    }
-                }
-            }                   
-        }
-
-            // we ignore DRY here because of debug operations
+                    // we ignore DRY here because of debug operations
             let mut encoder = self
                     .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
