@@ -510,7 +510,8 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
            xlines.len(), min_size.0 * min_size.1);
 
     let size = (((xlines.last().unwrap_or(&xlines[0])[1]) as u64),
-         ((xlines.last().unwrap_or(&xlines[0])[2]) as u64));
+         ((xlines.last().unwrap_or(&xlines[0])[2]) as u64 
+          + (xlines.last().unwrap_or(&xlines[0])[3] as u64)));
 
     return (size,
             placements.into_iter()

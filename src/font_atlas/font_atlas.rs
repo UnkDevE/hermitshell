@@ -43,7 +43,7 @@ impl FontAtlas {
             &TextureDescriptor { 
                 label: Some("font_atlas_tex"), 
                 size: Extent3d{
-                    width: size.0  as u32,
+                    width: size.0 as u32,
                     height: size.1 as u32,
                     depth_or_array_layers: 1
                 }, 
@@ -64,7 +64,12 @@ impl FontAtlas {
         }
 
         for (pixel_box_data, (pixels_bbox, pos_pixels)) in pixels_boxes { 
-             queue.write_texture(
+             #[cfg(debug_assertions)]
+            {
+             println!("pixel_bbox size ({},{}) pos: ({},{})", 
+                      pixels_bbox.width, pixels_bbox.height, pos_pixels.0, pos_pixels.1);
+            }
+            queue.write_texture(
                  wgpu::ImageCopyTextureBase {
                    texture: &font_atlas_tex,
                    mip_level: 0,

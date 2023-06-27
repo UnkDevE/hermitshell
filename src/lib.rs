@@ -670,6 +670,7 @@ impl State {
 
             // submit copy
             queue.submit(iter::once(encoder.finish()));
+            
 
             println!("glpyh copied to buf");
 
@@ -695,9 +696,12 @@ impl State {
                     ImageBuffer::<Rgba<u8>, _>::from_raw(width, 
                                                          texture.height(),
                                                          data).unwrap();
-                buffer.save(format!("glpyh_{}.png", glpyh)).unwrap();
+                buffer.save(format!("glpyh_{}.png", glpyh.to_string())).unwrap_or({
+                    println!("formatting issues with saving, continuing");
+                });
                 println!("glpyh {} saved as glpyh_{}.png", glpyh, glpyh); 
             }
+            glpyh_dbg_buf.unmap();
         }
     }                   
 
