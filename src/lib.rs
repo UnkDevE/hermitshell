@@ -696,10 +696,14 @@ impl State {
                     ImageBuffer::<Rgba<u8>, _>::from_raw(width, 
                                                          texture.height(),
                                                          data).unwrap();
-                buffer.save(format!("glpyh_{}.png", glpyh.to_string())).unwrap_or({
-                    println!("formatting issues with saving, continuing");
-                });
-                println!("glpyh {} saved as glpyh_{}.png", glpyh, glpyh); 
+                let result = buffer.save(format!("glpyh_{}.png", glpyh.to_string()));
+                if let Err(e) = result {
+                    println!("glpyh formatting error, glpyh: {}, error: {}",
+                                glpyh, e);
+                }
+                else {
+                    println!("glpyh {} saved as glpyh_{}.png", glpyh, glpyh); 
+                }
             }
             glpyh_dbg_buf.unmap();
         }
