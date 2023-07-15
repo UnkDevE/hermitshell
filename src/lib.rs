@@ -701,8 +701,11 @@ impl State {
                     println!("glpyh formatting error, glpyh: {}, error: {}",
                                 glpyh, e);
                 }
-                else {
+                else if let Ok(()) = result {
                     println!("glpyh {} saved as glpyh_{}.png", glpyh, glpyh); 
+                }
+                else {
+                    println!("Unknown image formatting error");
                 }
             }
             glpyh_dbg_buf.unmap();
