@@ -21,7 +21,7 @@ pub struct TermConfig{
 }
 
 pub struct FontAtlas {
-    pub atlas : wgpu::Buffer,
+    pub atlas : wgpu::Texture,
     // point = (u64, u64) => ((w, h), (x, y))
     pub lookup : HashMap<char, (Point, Point)>,
     pub atlas_size : Point,
@@ -34,7 +34,7 @@ impl FontAtlas {
     // device is locked so need reference
     fn font_atlas(pixels_boxes: &mut Vec<(Vec<u8>, (BBox, (u64, u64)))>, 
                   device: &mut wgpu::Device, queue: &mut wgpu::Queue, size: (u64, u64)) -> 
-        wgpu::Buffer {
+        wgpu::Texture {
 
         let mut enc = device.create_command_encoder(
             &CommandEncoderDescriptor { label: Some("font_atlas_enc") });
@@ -93,47 +93,12 @@ impl FontAtlas {
                 }
             );
         }
-
-        let u32_size = std::mem::size_of::<u32>() as u64;
-        let atlas_buf = device.create_buffer(
-           &BufferDescriptor { 
-                label: Some("font_atlas buffer") , 
-                usage: wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: true,
-                size: (size.0 * u32_size as u64).next_multiple_of(256) * size.1
-            });
-
-        enc.copy_texture_to_buffer(    
-            wgpu::ImageCopyTexture {
-                aspect: wgpu::TextureAspect::All,
-                texture: &font_atlas_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                }, 
-            wgpu::ImageCopyBufferBase { 
-                buffer: &atlas_buf, 
-                layout: wgpu::ImageDataLayout {
-                    offset: 0, 
-                    bytes_per_row: Some((size.0 * u32_size).next_multiple_of(256) as u32),
-                    rows_per_image: Some(size.1 as u32)
-                }
-            },
-            Extent3d { 
-                width: size.0 as u32, 
-                height: size.1 as u32, 
-                depth_or_array_layers:1 
-            }
-        );
-
-        // unmap the buffer
-        atlas_buf.unmap();
-
         // submit queue with empty command buffer to write to gpu
         use std::iter;
         queue.submit(iter::once(enc.finish()));
         device.poll(wgpu::Maintain::Wait);
-        return atlas_buf;
+
+        return font_atlas_tex;
     }
 
     // creates a new FontAtlas struct
@@ -246,34 +211,7 @@ impl FontAtlas {
     pub fn get_glpyh_data(&self, glpyh: char) -> 
         (wgpu::BufferSlice, u128) {
         // get position of char 
-        let pos = self.lookup.get(&glpyh).unwrap();
-
-        // calc start and end
         
-        // position
-        // DO NOT FORGET TO MULTIPLE BY CHANNELS
-        let start = pos.1.0 * pos.1.1 * 4;
-        let start_buf = start.prev_multiple_of(&8);
-    
-        // add w*h area 
-        let end = start_buf + pos.0.0 * pos.0.1 * 4;
-        let end_buf = end.next_multiple_of(4);
 
-        // we have increased bytes_per_row to a multiple of 256
-        // buffer alignment requires it to start at MAP_ALIGNMENT
-        // and end at COPY_BUFFER_ALIGNMENT
-
-        // return glpyh data as slice and offset
-        #[cfg(debug_assertions)]
-        println!("offsets {} start {} end {} width {} height {}", 
-            end_buf.abs_diff(start_buf).abs_diff(end.abs_diff(start)),
-                start_buf, end_buf, pos.0.0, pos.0.1);
-
-        // we don't know if aligned but we are anyway
-        // but this is best guess, not good.
-        return (self.atlas.
-                slice(start_buf..end_buf), (
-                    end_buf.abs_diff(start_buf).abs_diff(end.abs_diff(start))
-                ) as u128); 
     }
 }

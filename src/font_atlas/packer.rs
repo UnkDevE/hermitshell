@@ -434,8 +434,9 @@ pub fn packer(bboxes: &mut Vec<BBox>) -> (Point, Vec<(BBox, Point)>) {
     // first step init qual
     // add to line the width of all rects
     let min_size = get_min_size(bboxes.clone());
-    let xlines_start: Vec<Line> = vec![[0, min_size.0 as i64, min_size.1 as i64,
-                                        0, 1]];
+    let xlines_start: Vec<Line> = vec![[0, min_size.0 as i64, 
+                                            0, // how much height took up
+                                            min_size.1 as i64, 1]];
 
     let mut xlines: Vec<Line> = xlines_start.clone();
 
