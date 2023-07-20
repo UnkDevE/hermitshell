@@ -95,6 +95,8 @@ impl State {
         // load fontatlas
         let font_atlas = FontAtlas::new(term_config.clone(), &mut device,
                                         &mut queue);
+        /*
+         *  this needs to be re writtern for the rewrite
         #[cfg(debug_assertions)]
         {
             println!("atlas buffer complete");
@@ -131,7 +133,7 @@ impl State {
                 }
             }
             font_atlas.atlas.unmap();
-        }
+        } */
 
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
             Self::make_render_pipeline(&mut device, config.format); 
@@ -326,14 +328,17 @@ impl State {
 
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
+            // create buffer
+            let glpyh_buf 
+                = font_atlas.get_glpyh_data(*glpyh, device, queue); 
+
+
             #[cfg(debug_assertions)]
             println!("font_atlas lookup glpyh {}", glpyh);
             {
+                let glpyh_slice = glpyh_buf.slice(..);
                 // NOTE: We have to create the mapping 
                 // THEN device.poll() before await
-                let (glpyh_slice, _) 
-                    = font_atlas.get_glpyh_data(*glpyh);        
-
                 let (sender, receiver) = 
                     futures_intrusive::channel::shared::oneshot_channel();
                 glpyh_slice.map_async(wgpu::MapMode::Read, 
@@ -447,8 +452,8 @@ impl State {
             #[cfg(debug_assertions)]
             println!("finished glpyh queue polling");
 
-            // clean up
-            font_atlas.atlas.unmap(); 
+            // clean up 
+            glpyh_buf.unmap();
         }
         return glpyhs;
     }

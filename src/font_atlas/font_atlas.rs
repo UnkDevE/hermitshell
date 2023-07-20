@@ -36,7 +36,7 @@ impl FontAtlas {
                   device: &mut wgpu::Device, queue: &mut wgpu::Queue, size: (u64, u64)) -> 
         wgpu::Texture {
 
-        let mut enc = device.create_command_encoder(
+        let enc = device.create_command_encoder(
             &CommandEncoderDescriptor { label: Some("font_atlas_enc") });
 
         let font_atlas_tex = device.create_texture(
@@ -204,14 +204,60 @@ impl FontAtlas {
             lookup : atlas_lookup, atlas_size : size}; 
     }
 
-    
 
     // function to get glpyh data on a single char
     // returns wgpu::BufferSlice ready to be rendered as image data
-    pub fn get_glpyh_data(&self, glpyh: char) -> 
-        (wgpu::BufferSlice, u128) {
-        // get position of char 
-        
+    pub fn get_glpyh_data(&self, glpyh: char, 
+          device: &mut wgpu::Device, queue: &mut wgpu::Queue) -> wgpu::Buffer {
+            // if get position of char 
+            if let Some(position) = self.lookup.get(&glpyh) {
+                // create buffer for loading glpyh
+                let mut encoder = device.create_command_encoder(
+                    &CommandEncoderDescriptor { label: Some("font_atlas_glpyh_enc") });
 
+                let buf = device.create_buffer(&BufferDescriptor{
+                    label: Some(&format!("glpyh {} buf internal", glpyh)),
+                    size: position.0.1 * (4 * position.0.0).next_multiple_of(256),
+                    usage: wgpu::BufferUsages::MAP_READ |
+                            wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+
+                encoder.copy_texture_to_buffer(
+                    wgpu_types::ImageCopyTexture { 
+                        texture: &self.atlas, 
+                        mip_level: 0, 
+                        origin: wgpu::Origin3d{
+                            x: position.1.0 as u32,
+                            y: position.1.1 as u32, 
+                            z: 0}, 
+                        aspect: wgpu_types::TextureAspect::All 
+                    },
+                    wgpu_types::ImageCopyBuffer { 
+                        buffer: &buf, 
+                        layout: wgpu_types::ImageDataLayout {
+                            offset: 0, 
+                            bytes_per_row: Some((position.0.0 as u32 * 4).next_multiple_of(256)),
+                            rows_per_image: Some(position.0.1 as u32)
+                        }
+                    },
+                    Extent3d { 
+                        width: (position.0.0 as u32 * 4).next_multiple_of(256).div_ceil(4), 
+                        height: position.0.1 as u32, 
+                        depth_or_array_layers: 1 
+                });
+               
+                // submit to queue to write buf.
+                use std::iter;
+                queue.submit(iter::once(encoder.finish()));
+                //buf set for write, wait for completion
+                device.poll(wgpu::Maintain::Wait);
+
+                return buf;
+        }
+        else{
+            panic!("no position found in atlas");
+        }
     }
 }
+             
