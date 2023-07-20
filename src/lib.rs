@@ -9,6 +9,7 @@ pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
 
+use num::integer::Roots;
 use wgpu::ImageDataLayout;
 use wgpu::TextureFormat;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
@@ -95,13 +96,51 @@ impl State {
         // load fontatlas
         let font_atlas = FontAtlas::new(term_config.clone(), &mut device,
                                         &mut queue);
-        /*
-         *  this needs to be re writtern for the rewrite
         #[cfg(debug_assertions)]
         {
-            println!("atlas buffer complete");
+            println!("atlas texture complete creating dbg buffer...");
 
-            let slice = font_atlas.atlas.slice(..);
+            let width = (font_atlas.atlas_size.0 * 4).next_multiple_of(256);
+            let font_buf = device.create_buffer(
+                &wgpu::BufferDescriptor{
+                    label: Some("fontatlas dgb buf"),
+                    size: width * font_atlas.atlas.height() as u64,
+                    usage: wgpu::BufferUsages::MAP_READ | 
+                        wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false
+                });
+
+            let mut font_enc = device.create_command_encoder(
+                &wgpu_types::CommandEncoderDescriptor { label: Some("fontatlas cmd enc")});
+                
+            font_enc.copy_texture_to_buffer(
+                wgpu_types::ImageCopyTexture { texture: &font_atlas.atlas, 
+                    mip_level: 0, 
+                    origin: wgpu_types::Origin3d {
+                        x: 0, 
+                        y: 0, 
+                        z: 0
+                    },
+                    aspect: wgpu_types::TextureAspect::All}, 
+                wgpu_types::ImageCopyBuffer { 
+                    buffer: &font_buf, 
+                    layout: ImageDataLayout { 
+                        offset: 0, 
+                        bytes_per_row: Some(width as u32), 
+                        rows_per_image: Some(font_atlas.atlas.height())} 
+                },
+                wgpu_types::Extent3d { 
+                    width: font_atlas.atlas.width(), 
+                    height: font_atlas.atlas.height(), 
+                    depth_or_array_layers: 1 
+            });
+
+            // poll the buffers
+            queue.submit(iter::once(font_enc.finish()));
+            device.poll(wgpu::Maintain::Wait);
+
+            let slice = font_buf.slice(..);
+
             let (sender, receiver) = 
                     futures_intrusive::channel::shared::oneshot_channel();
                 slice.map_async(wgpu::MapMode::Read, 
@@ -117,11 +156,10 @@ impl State {
                 use image::Rgba;
                 // save buffer image as file
                 // find next_multiple_of and then divide by bytes
-                let width = (font_atlas.atlas_size.0 * 4).next_multiple_of(256) / 4;
                 // match 
                 match image::ImageBuffer::
-                    <Rgba<u8>, _>::from_raw(width as u32, 
-                                            font_atlas.atlas_size.1 as u32, 
+                    <Rgba<u8>, _>::from_raw(width.div_ceil(4) as u32, 
+                                            font_atlas.atlas.height() as u32, 
                      buf_data.as_slice()) {
                         Some(ibuf) => match ibuf.save("fontmap.png") {
                             Ok(()) => println!("Image save succesful"),
@@ -132,8 +170,8 @@ impl State {
                         }
                 }
             }
-            font_atlas.atlas.unmap();
-        } */
+            font_buf.unmap();
+        } 
 
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
             Self::make_render_pipeline(&mut device, config.format); 
@@ -544,7 +582,7 @@ impl State {
             let size = (acc.0.0 * acc.0.1) as u32;
             if init < size { return size }
             return init;
-        });
+        }).sqrt();
 
         let texture_desc = wgpu::TextureDescriptor {
             size: wgpu::Extent3d {
