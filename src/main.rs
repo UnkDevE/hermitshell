@@ -44,7 +44,9 @@ pub async fn run(){
 
     // setup window
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    use winit::dpi::LogicalSize;
+    let window = WindowBuilder::new().with_min_inner_size(
+        LogicalSize::new(1.0, 1.0)).build(&event_loop).unwrap();
     window.set_title("hermitshell");
 
     // spawn os-specific shell
