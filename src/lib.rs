@@ -375,109 +375,97 @@ impl State {
             println!("font_atlas lookup glpyh {}", glpyh);
             {
                 let glpyh_slice = glpyh_buf.slice(..);
-                // NOTE: We have to create the mapping 
-                // THEN device.poll() before await
-                let (sender, receiver) = 
-                    futures_intrusive::channel::shared::oneshot_channel();
-                glpyh_slice.map_async(wgpu::MapMode::Read, 
-                                      move |v| sender.send(v).unwrap());
-
-
                 #[cfg(debug_assertions)]
                 println!("polling device for glpyh {} started", glpyh);
 
                 device.poll(wgpu::Maintain::Wait);
-                if let Some(Ok(())) = receiver.receive().await {
 
-                    #[cfg(debug_assertions)]
-                    println!("found glpyh mapping to texture...");
+                #[cfg(debug_assertions)]
+                println!("found glpyh mapping to texture...");
 
                     // create buf view and lookup bounding box
-                    let glpyh_data = glpyh_slice.get_mapped_range();
-                    let Some(bbox) = font_atlas.lookup.get(&glpyh) else 
-                        {panic!("no lookup for glpyh")};
+                let glpyh_data = glpyh_slice.get_mapped_range();
+                let Some(bbox) = font_atlas.lookup.get(&glpyh) else 
+                    {panic!("no lookup for glpyh")};
 
-                    let tex_size = wgpu::Extent3d{
-                                height: bbox.0.1 as u32, 
-                                width: bbox.0.0 as u32, 
-                                depth_or_array_layers: 1
-                            };
+                let tex_size = wgpu::Extent3d{
+                            height: bbox.0.1 as u32, 
+                            width: bbox.0.0 as u32, 
+                            depth_or_array_layers: 1
+                        };
 
-                    let glpyh_tex = device.create_texture(&wgpu::TextureDescriptor{
-                            label: Some(&format!("glpyh_tex {}", glpyh)),
-                            size: tex_size,
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                                | wgpu::TextureUsages::TEXTURE_BINDING
-                                | wgpu::TextureUsages::COPY_DST
-                                | wgpu::TextureUsages::COPY_SRC,
-                            view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb],
-                    });
+                let glpyh_tex = device.create_texture(&wgpu::TextureDescriptor{
+                        label: Some(&format!("glpyh_tex {}", glpyh)),
+                        size: tex_size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::COPY_DST
+                            | wgpu::TextureUsages::COPY_SRC,
+                        view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb],
+                });
 
-                    #[cfg(debug_assertions)]
-                    {
-                        println!("bbox size ({}, {})", bbox.0.0, bbox.0.1);
-                        println!("glpyh_data size in bytes {}", glpyh_data.len());
+                #[cfg(debug_assertions)]
+                {
+                    println!("bbox size ({}, {})", bbox.0.0, bbox.0.1);
+                    println!("glpyh_data size in bytes {}", glpyh_data.len());
+                }
+
+                // write from buffer
+                queue.write_texture(
+                    glpyh_tex.as_image_copy(),
+                    &glpyh_data,
+                    ImageDataLayout{
+                        bytes_per_row: Some(bbox.0.0 as u32 * 4),
+                        rows_per_image: None,
+                        offset: 0 // offsets not looked at here rn
+                }, tex_size);
+                
+               // create view for bindgroup
+                let view = glpyh_tex.create_view(&wgpu::TextureViewDescriptor { 
+                    label: Some(&format!("tex view {}", glpyh)), 
+                    format: Some(wgpu::TextureFormat::Bgra8UnormSrgb), 
+                    dimension: Some(wgpu::TextureViewDimension::D2), 
+                    aspect: wgpu::TextureAspect::All, 
+                    base_mip_level: 0, 
+                    mip_level_count: None, 
+                    base_array_layer: 0, 
+                    array_layer_count: None 
+                });
+
+                let glpyh_encoder = device.create_command_encoder(
+                    &CommandEncoderDescriptor { label: Some(&format!("glpyh enc {}", glpyh))});
+
+                // submit queue 
+                // should only do this once in future revisions
+                queue.submit(iter::once(glpyh_encoder.finish()));
+
+                // write texture to bindgroup using device.
+                glpyhs.insert(*glpyh, device.create_bind_group(
+                    &wgpu::BindGroupDescriptor {
+                        layout: &glpyh_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::
+                                    TextureView(&view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::
+                                    Sampler(&glpyh_sampler),
+                            }
+                        ],
+                        label: Some(&format!("glpyh bindgroup {}", *glpyh))
                     }
+                ));
 
-                    // write from buffer
-                    queue.write_texture(
-                        glpyh_tex.as_image_copy(),
-                        &glpyh_data,
-                        ImageDataLayout{
-                            bytes_per_row: Some(bbox.0.0 as u32 * 4),
-                            rows_per_image: None,
-                            offset: 0 // offsets not looked at here rn
-                    }, tex_size);
-                    
-                   // create view for bindgroup
-                    let view = glpyh_tex.create_view(&wgpu::TextureViewDescriptor { 
-                        label: Some(&format!("tex view {}", glpyh)), 
-                        format: Some(wgpu::TextureFormat::Bgra8UnormSrgb), 
-                        dimension: Some(wgpu::TextureViewDimension::D2), 
-                        aspect: wgpu::TextureAspect::All, 
-                        base_mip_level: 0, 
-                        mip_level_count: None, 
-                        base_array_layer: 0, 
-                        array_layer_count: None 
-                    });
+                #[cfg(debug_assertions)]
+                println!("glpyh {} inserted to hashmap", *glpyh);
 
-                    let glpyh_encoder = device.create_command_encoder(
-                        &CommandEncoderDescriptor { label: Some(&format!("glpyh enc {}", glpyh))});
-
-                    // submit queue 
-                    // should only do this once in future revisions
-                    queue.submit(iter::once(glpyh_encoder.finish()));
-
-                    // write texture to bindgroup using device.
-                    glpyhs.insert(*glpyh, device.create_bind_group(
-                        &wgpu::BindGroupDescriptor {
-                            layout: &glpyh_layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::
-                                        TextureView(&view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::
-                                        Sampler(&glpyh_sampler),
-                                }
-                            ],
-                            label: Some(&format!("glpyh bindgroup {}", *glpyh))
-                        }
-                    ));
-
-                    #[cfg(debug_assertions)]
-                    println!("glpyh {} inserted to hashmap", *glpyh);
-                }
-                else {
-                    panic!("timeout for glpyh load");
-                }
                 #[cfg(debug_assertions)]
                 println!("polling device for glpyh {} complete", glpyh);
             }
