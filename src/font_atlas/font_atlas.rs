@@ -3,8 +3,8 @@ use crate::font_atlas::packer::Point;
 use crate::font_atlas::packer::BBox;
 use crate::font_atlas::packer::area_protect;
 
+use core::slice::SlicePattern;
 use std::collections::HashMap;
-use num::Integer;
 use wgpu::CommandEncoderDescriptor;
 use wgpu::BufferDescriptor;
 use wgpu::Extent3d;
@@ -207,7 +207,7 @@ impl FontAtlas {
 
     // function to get glpyh data on a single char
     // returns wgpu::BufferSlice ready to be rendered as image data
-    pub fn get_glpyh_data(&self, glpyh: char, 
+    pub async fn get_glpyh_data(&self, glpyh: char, 
           device: &mut wgpu::Device, queue: &mut wgpu::Queue) -> wgpu::Buffer {
             // if get position of char 
             if let Some(position) = self.lookup.get(&glpyh) {
@@ -252,6 +252,36 @@ impl FontAtlas {
                 queue.submit(iter::once(encoder.finish()));
                 //buf set for write, wait for completion
                 device.poll(wgpu::Maintain::Wait);
+
+                #[cfg(debug_assertions)]
+                {
+                    use image::Rgba;
+                    let slice = buf.slice(..);
+
+                    let (sender, reciver) = 
+                            futures_intrusive::channel::shared::oneshot_channel();
+
+                    slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+                    device.poll(wgpu::Maintain::Wait);
+
+                    if let Some(Ok(())) = reciver.receive().await {
+                        let buf_data = slice.get_mapped_range();
+                        let width = (position.0.0 as u32 * 4).next_multiple_of(256).div_ceil(4);
+                        match image::ImageBuffer::<Rgba<u8>, _>
+                            ::from_raw(width, position.0.1 as u32, buf_data.as_slice()) {
+                                Some(image) => match 
+                                    image.save(format!("glpyh_get_{}.png", &glpyh)) {
+                                        Ok(()) => println!("image get save succesful"),
+                                        Err(e) => println!("image get save unsuccesful , {}", e)
+                                    }
+                                None => {
+                                    println!(
+                                        "Image get buffer for glpyh {} unsuccesful", glpyh                                          )
+                                }
+                            }
+
+                    }
+                }
 
                 return buf;
         }

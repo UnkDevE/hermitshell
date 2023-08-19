@@ -1,4 +1,6 @@
 #![feature(int_roundings)]
+#![feature(slice_pattern)]
+
 use hermitshell::State;
 mod font_atlas;
 use hermitshell::font_atlas::font_atlas::TermConfig;

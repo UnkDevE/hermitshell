@@ -368,7 +368,7 @@ impl State {
         for glpyh in font_atlas.lookup.keys() {
             // create buffer
             let glpyh_buf 
-                = font_atlas.get_glpyh_data(*glpyh, device, queue); 
+                = font_atlas.get_glpyh_data(*glpyh, device, queue).await; 
 
 
             #[cfg(debug_assertions)]
@@ -684,9 +684,6 @@ impl State {
                 render_pass.draw(0..4, 0..1);
                 println!("glpyh drawn");
             }
-
-            // submit
-            queue.submit(iter::once(encoder.finish()));
         
             // don't present output
             let glpyh_dbg_buf = device.create_buffer(&glpyh_dgb_buf_desc);
@@ -736,7 +733,7 @@ impl State {
                 use image::{ImageBuffer, Rgba};
                 let width = (texture.width() * 4).next_multiple_of(256).div_ceil(4);
                 let buffer =
-                    ImageBuffer::<Rgba<u8>, _>::from_raw(width, 
+                   ImageBuffer::<Rgba<u8>, _>::from_raw(width, 
                                                          texture.height(),
                                                          data).unwrap();
                 let result = buffer.save(format!("glpyh_{}.png", glpyh.to_string()));
