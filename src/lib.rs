@@ -62,6 +62,7 @@ pub struct State {
     glpyhs: HashMap<char, wgpu::BindGroup>,
     pub shell_buf : ShellBuf,
     term_config: TermConfig,
+    glpyh_indicies: wgpu::Buffer,
 }
 
 pub struct ShellBuf {
@@ -178,6 +179,20 @@ impl State {
 
         let glpyhs = Self::make_glpyhs(&mut device, &mut queue, 
                                        &font_atlas, glpyh_sampler, glpyh_layout).await;
+     
+        let indicies: &[u16] = &[
+            0, 1, 2, 
+            3, 2, 1
+        ];
+
+        // create buffer for position
+        let glpyh_indicies = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor { 
+                label: Some("dgb buffer indicies"),
+                contents: bytemuck::cast_slice(indicies),
+                usage: wgpu::BufferUsages::INDEX,
+        });
+
 
         // pack into struct
         return Self {
@@ -191,7 +206,9 @@ impl State {
                 shell_buf: ShellBuf{
                     string_buf: String::new(), glpyhs_pos: vec![]
                 },
-                glpyhs,term_config
+                glpyhs,
+                term_config,
+                glpyh_indicies
            };
     }
             
@@ -478,7 +495,7 @@ impl State {
             #[cfg(debug_assertions)]
             println!("finished glpyh queue polling");
 
-            // clean up 
+            // clean up glpyh mapped in font_atlas code
             glpyh_buf.unmap();
         }
         return glpyhs;
@@ -625,18 +642,29 @@ impl State {
             Vertex { position: [1.0, 0.0
                 ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
             Vertex { position: [1.0, 0.0, 0.0], tex_coords: [1.0,1.0], 
-            },
-            // t rh corner
+            },  // t rh corner
+        ];
+
+        let glpyh_indicies: &[u16] = &[
+                0, 1, 2, // bottom LH triangle
+                3, 2, 1
         ];
 
         // create buffer for position
         let glpyh_positions = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor { 
-                label: Some("dgb buffer"),
+                label: Some("dgb buffer positions"),
                 contents: bytemuck::cast_slice(glpyh_vert),
                 usage: wgpu::BufferUsages::VERTEX,
         });
 
+        // create buffer for position
+        let glpyh_indicies = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor { 
+                label: Some("dgb buffer indicies"),
+                contents: bytemuck::cast_slice(glpyh_indicies),
+                usage: wgpu::BufferUsages::INDEX,
+        });
 
         for (glpyh, bindgroup) in glpyhs {
             let mut encoder = device
@@ -669,19 +697,13 @@ impl State {
                 // hack into render pipeline to render glpyh for dbg purposes
                 render_pass.set_bind_group(0, &bindgroup, &[]);
                 render_pass.set_vertex_buffer(0, glpyh_positions.slice(..));
-                render_pass.draw(0..4, 0..1);
+                render_pass.set_index_buffer(glpyh_indicies.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.draw_indexed(0..4, 1, 0..1);
                 println!("glpyh drawn");
             }
-        
             // don't present output
             let glpyh_dbg_buf = device.create_buffer(&glpyh_dgb_buf_desc);
 
-            // recreate encoder for copying buffers
-            encoder = device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Copy Debug Encoder"),
-            });
-            
             // save into buf from texture
             let width = texture.width();
             encoder.copy_texture_to_buffer(
@@ -691,7 +713,7 @@ impl State {
                     layout: wgpu::ImageDataLayout {
                         offset: 0,
                         bytes_per_row: Some((4 * width).next_multiple_of(256)),
-                        rows_per_image: None,
+                        rows_per_image: Some(texture.height()),
                     },
                 },
                 texture.size());
@@ -769,7 +791,7 @@ impl State {
                                         b: 0.0,
                                         a: 0.0,
                                     }),
-                                    store: true,
+                                    store: false,
                                 },
                             })],
                             depth_stencil_attachment: None,
@@ -784,6 +806,7 @@ impl State {
                             
                              #[cfg(debug_assertions)]
                              println!("chr {} printed to shell", chr);
+
                             if chr != ' ' {
                                 if let Some(glpyh) = self.glpyhs.get(&chr) {
                                     if let Some(positions) = 
@@ -791,7 +814,8 @@ impl State {
                                         render_pass.set_bind_group(0, &glpyh, &[]);
                                         render_pass.set_vertex_buffer(0, 
                                                                       positions.slice(..));
-                                        render_pass.draw(0..4, 0..1);
+                                        render_pass.set_index_buffer(self.glpyh_indicies.slice(..), wgpu::IndexFormat::Uint16);
+                                        render_pass.draw_indexed(0..4, 1, 0..1);
                                         #[cfg(debug_assertions)]
                                         println!("pixels rendered for glpyh {}", &chr);
                                 }
