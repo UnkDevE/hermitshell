@@ -8,6 +8,7 @@
 pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
+use font_atlas::glpyh_loader::GlpyhLoader;
 
 use num::integer::Roots;
 use wgpu::ImageDataLayout;
@@ -63,6 +64,7 @@ pub struct State {
     pub shell_buf : ShellBuf,
     term_config: TermConfig,
     glpyh_indicies: wgpu::Buffer,
+    glpyh_loader : GlpyhLoader,
 }
 
 pub struct ShellBuf {
@@ -177,8 +179,11 @@ impl State {
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
             Self::make_render_pipeline(&mut device, config.format); 
 
+        let glpyh_loader = GlpyhLoader::new(term_config.clone());
+
         let glpyhs = Self::make_glpyhs(&mut device, &mut queue, 
-                                       &font_atlas, glpyh_sampler, glpyh_layout).await;
+                                       &font_atlas, 
+                                       glpyh_loader, glpyh_sampler, glpyh_layout).await;
      
         let indicies: &[u16] = &[
             0, 1, 2, 
@@ -193,7 +198,7 @@ impl State {
                 usage: wgpu::BufferUsages::INDEX,
         });
 
-
+        let glpyh_loader = GlpyhLoader::new(term_config.clone());
         // pack into struct
         return Self {
                 surface,
@@ -208,7 +213,8 @@ impl State {
                 },
                 glpyhs,
                 term_config,
-                glpyh_indicies
+                glpyh_indicies,
+                glpyh_loader
            };
     }
             
@@ -372,7 +378,7 @@ impl State {
 
 
        pub async fn make_glpyhs(device: &mut wgpu::Device, 
-                                queue: &mut wgpu::Queue, font_atlas: &FontAtlas, 
+                                queue: &mut wgpu::Queue, font_atlas: &FontAtlas, glpyh_loader: GlpyhLoader,
                                 glpyh_sampler: wgpu::Sampler, glpyh_layout: wgpu::BindGroupLayout) -> 
         HashMap<char, wgpu::BindGroup> {
 
@@ -381,8 +387,11 @@ impl State {
 
         let mut glpyhs: HashMap<char, wgpu::BindGroup> = HashMap::new();
 
+        /* HOTSWAP
         // render each glpyh to texture
         for glpyh in font_atlas.lookup.keys() {
+        */
+        for glpyh in glpyh_loader.glpyh_map.keys() {
             // create buffer
             let glpyh_buf 
                 = font_atlas.get_glpyh_data(*glpyh, device, queue).await; 
@@ -407,7 +416,7 @@ impl State {
 
                 let tex_size = wgpu::Extent3d{
                             height: bbox.0.1 as u32, 
-                            width: bbox.0.0 as u32, 
+                            width: (bbox.0.0 as u32 * 4).next_multiple_of(256).div_ceil(4),
                             depth_or_array_layers: 1
                         };
 
@@ -436,8 +445,9 @@ impl State {
                     glpyh_tex.as_image_copy(),
                     &glpyh_data,
                     ImageDataLayout{
-                        bytes_per_row: Some(bbox.0.0 as u32 * 4),
-                        rows_per_image: None,
+                        bytes_per_row: Some((bbox.0.0 as u32 * 4)
+                                            .next_multiple_of(256)),
+                        rows_per_image: Some(bbox.0.1 as u32),
                         offset: 0 // offsets not looked at here rn
                 }, tex_size);
                 
@@ -567,7 +577,7 @@ impl State {
     }
 
     // BIG OVERHEAD, creates copy of renderpipline to debug glpyh usage
-    pub async fn debug_glpyhs(&mut self) {
+    pub async fn debug_glpyhs(self) {
        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             dx12_shader_compiler: Default::default(),
@@ -600,15 +610,13 @@ impl State {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Bgra8UnormSrgb,
             usage: wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
-                ,
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             label: None,
             view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb]
         };
 
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
             Self::make_render_pipeline(&mut device, texture_desc.format);
-
         
         // repopulate hashmap in font_atlas
         let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
@@ -616,7 +624,8 @@ impl State {
         // create second set of bindgroups HOT call
         let glpyhs = 
             pollster::block_on(Self::make_glpyhs(&mut device, &mut queue, 
-                              &font_atlas, glpyh_sampler, glpyh_layout));
+                              &font_atlas, self.glpyh_loader, 
+                              glpyh_sampler, glpyh_layout));
 
         let texture = device.create_texture(&texture_desc);
         let texture_view = texture.create_view(&Default::default());
@@ -686,7 +695,7 @@ impl State {
                                     b: 0.0,
                                     a: 0.0,
                                 }),
-                                store: true,
+                                store: false,
                             },
                         })],
                         depth_stencil_attachment: None,

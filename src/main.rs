@@ -46,7 +46,7 @@ pub async fn run(){
     let event_loop = EventLoop::new();
     use winit::dpi::LogicalSize;
     let window = WindowBuilder::new().with_min_inner_size(
-        LogicalSize::new(1.0, 1.0)).build(&event_loop).unwrap();
+        LogicalSize::new(120.0, 640.0)).build(&event_loop).unwrap();
     window.set_title("hermitshell");
 
     // spawn os-specific shell
@@ -66,7 +66,7 @@ pub async fn run(){
     let Some(font_dir) = env::args().nth(1) else {todo!()};
     
     // impl state
-    let mut state = State::new(&window, TermConfig {font_dir, font_size: 18.0}).await;
+    let mut state = State::new(&window, TermConfig {font_dir, font_size: 24.0}).await;
     println!("GLPYH DEBUG STARTED");
     state.debug_glpyhs().await;
 
