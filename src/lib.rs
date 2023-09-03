@@ -4,7 +4,7 @@
  */
 #![feature(int_roundings)]
 #![feature(iter_intersperse)]
-#![feature(slice_pattern)] #![feature(default_free_fn)]
+#![feature(slice_pattern)] 
 pub mod font_atlas;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
@@ -64,7 +64,6 @@ pub struct State {
     pub shell_buf : ShellBuf,
     term_config: TermConfig,
     glpyh_indicies: wgpu::Buffer,
-    glpyh_loader : GlpyhLoader,
 }
 
 pub struct ShellBuf {
@@ -198,7 +197,6 @@ impl State {
                 usage: wgpu::BufferUsages::INDEX,
         });
 
-        let glpyh_loader = GlpyhLoader::new(term_config.clone());
         // pack into struct
         return Self {
                 surface,
@@ -214,7 +212,6 @@ impl State {
                 glpyhs,
                 term_config,
                 glpyh_indicies,
-                glpyh_loader
            };
     }
             
@@ -577,7 +574,7 @@ impl State {
     }
 
     // BIG OVERHEAD, creates copy of renderpipline to debug glpyh usage
-    pub async fn debug_glpyhs(self) {
+    pub async fn debug_glpyhs(&mut self) {
        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             dx12_shader_compiler: Default::default(),
@@ -621,10 +618,11 @@ impl State {
         // repopulate hashmap in font_atlas
         let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
                                         &mut queue);
+        let glpyh_loader = GlpyhLoader::new(self.term_config.clone());
         // create second set of bindgroups HOT call
         let glpyhs = 
             pollster::block_on(Self::make_glpyhs(&mut device, &mut queue, 
-                              &font_atlas, self.glpyh_loader, 
+                              &font_atlas, glpyh_loader, 
                               glpyh_sampler, glpyh_layout));
 
         let texture = device.create_texture(&texture_desc);
