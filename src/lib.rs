@@ -15,6 +15,7 @@ use wgpu::ImageDataLayout;
 use wgpu::TextureFormat;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
+use wgpu_types::ImageCopyTexture;
 use winit::{
     event::*,
     window::Window
@@ -390,14 +391,14 @@ impl State {
         */
         for glpyh in glpyh_loader.glpyh_map.keys() {
             // create buffer
-            let glpyh_buf 
-                = font_atlas.get_glpyh_data(*glpyh, device, queue).await; 
+            let Some(glpyh_buf)
+                = glpyh_loader.get_glpyh_data(*glpyh, device, queue).await
+                    else { panic!("no glpyh found for {}", glpyh); };
 
 
             #[cfg(debug_assertions)]
             println!("font_atlas lookup glpyh {}", glpyh);
             {
-                let glpyh_slice = glpyh_buf.slice(..);
                 #[cfg(debug_assertions)]
                 println!("polling device for glpyh {} started", glpyh);
 
@@ -407,13 +408,12 @@ impl State {
                 println!("found glpyh mapping to texture...");
 
                     // create buf view and lookup bounding box
-                let glpyh_data = glpyh_slice.get_mapped_range();
-                let Some(bbox) = font_atlas.lookup.get(&glpyh) else 
+                let Some((bbox, _)) = glpyh_loader.glpyh_map.get(glpyh) else 
                     {panic!("no lookup for glpyh")};
 
                 let tex_size = wgpu::Extent3d{
-                            height: bbox.0.1 as u32, 
-                            width: (bbox.0.0 as u32 * 4).next_multiple_of(256).div_ceil(4),
+                            height: bbox.height as u32, 
+                            width: (bbox.width as u32 * 4).next_multiple_of(256).div_ceil(4),
                             depth_or_array_layers: 1
                         };
 
@@ -433,21 +433,49 @@ impl State {
 
                 #[cfg(debug_assertions)]
                 {
-                    println!("bbox size ({}, {})", bbox.0.0, bbox.0.1);
-                    println!("glpyh_data size in bytes {}", glpyh_data.len());
+                    println!("bbox size ({}, {})", bbox.width, bbox.height);
                 }
 
+                let mut glpyh_encoder = device.create_command_encoder(
+                    &CommandEncoderDescriptor { label: Some(&format!("glpyh enc {}", glpyh))});
+
+                use num::Integer;
                 // write from buffer
+
+                /*
+                 * pulling out of the buffer directly doesn't work
+                 * glpyh_encoder.copy_buffer_to_texture(
+                    wgpu::ImageCopyBuffer { 
+                        buffer: &glpyh_buf, 
+                        layout: ImageDataLayout { 
+                            offset: 
+                            ((bbox.height * (bbox.width * 4).next_multiple_of(256))
+                                    - bbox.height * bbox.width).prev_multiple_of(&256),
+                            bytes_per_row: Some(((bbox.width * 4).next_multiple_of(256)) as u32),
+                            rows_per_image: Some(bbox.height as u32)}
+                    },
+                    ImageCopyTexture { 
+                        texture: &glpyh_tex, 
+                        mip_level: 0, 
+                        origin: wgpu::Origin3d::default(), 
+                        aspect: wgpu_types::TextureAspect::All, 
+                    }, tex_size);
+                */
+
                 queue.write_texture(
-                    glpyh_tex.as_image_copy(),
-                    &glpyh_data,
-                    ImageDataLayout{
-                        bytes_per_row: Some((bbox.0.0 as u32 * 4)
-                                            .next_multiple_of(256)),
-                        rows_per_image: Some(bbox.0.1 as u32),
-                        offset: 0 // offsets not looked at here rn
-                }, tex_size);
+                    glpyh_tex.as_image_copy(), 
+                    glpyh_buf.slice(0..
+                             ((bbox.width * 4).next_multiple_of(256) * bbox.height))
+                        .get_mapped_range().as_slice(), 
+                    ImageDataLayout { 
+                        offset: 0, 
+                        bytes_per_row: Some((bbox.width * 4).next_multiple_of(256) as u32),
+                        rows_per_image: Some(bbox.height as u32)
+                    }, 
+                    tex_size);
+
                 
+
                // create view for bindgroup
                 let view = glpyh_tex.create_view(&wgpu::TextureViewDescriptor { 
                     label: Some(&format!("tex view {}", glpyh)), 
@@ -459,9 +487,6 @@ impl State {
                     base_array_layer: 0, 
                     array_layer_count: None 
                 });
-
-                let glpyh_encoder = device.create_command_encoder(
-                    &CommandEncoderDescriptor { label: Some(&format!("glpyh enc {}", glpyh))});
 
                 // submit queue 
                 // should only do this once in future revisions

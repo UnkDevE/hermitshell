@@ -83,7 +83,7 @@ impl GlpyhLoader {
                 &CommandEncoderDescriptor { label: Some("glpyh_loader_enc") });
 
             let size = 
-                bbox.height * (4 * bbox.width).next_multiple_of(256).div_ceil(4); 
+                bbox.height * (4 * bbox.width).next_multiple_of(256); 
 
             use wgpu::BufferDescriptor;
             let glpyh_buf = device.create_buffer(&BufferDescriptor{
@@ -91,7 +91,7 @@ impl GlpyhLoader {
                 size,
                 usage: wgpu::BufferUsages::MAP_READ |
                         wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
+                mapped_at_creation: true,
             });
             
             queue.write_buffer(&glpyh_buf, 0, data);
