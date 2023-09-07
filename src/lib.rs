@@ -6,6 +6,7 @@
 #![feature(iter_intersperse)]
 #![feature(slice_pattern)] 
 pub mod font_atlas;
+use bytemuck::bytes_of;
 use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
 use font_atlas::glpyh_loader::GlpyhLoader;
@@ -64,7 +65,8 @@ pub struct State {
     glpyhs: HashMap<char, wgpu::BindGroup>,
     pub shell_buf : ShellBuf,
     term_config: TermConfig,
-    glpyh_indicies: wgpu::Buffer,
+    glpyh_indicies: [u16;6],
+    glpyh_indicies_buf: wgpu::Buffer,
 }
 
 pub struct ShellBuf {
@@ -185,16 +187,17 @@ impl State {
                                        &font_atlas, 
                                        glpyh_loader, glpyh_sampler, glpyh_layout).await;
      
-        let indicies: &[u16] = &[
-            0, 1, 2, 
-            3, 2, 1
+        // controls indicies for debug code and render
+        let glpyh_indicies: [u16;6] = [
+            0, 1, 2,
+            0, 2, 3, 
         ];
 
         // create buffer for position
-        let glpyh_indicies = device.create_buffer_init(
+        let glpyh_indicies_buf = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor { 
                 label: Some("dgb buffer indicies"),
-                contents: bytemuck::cast_slice(indicies),
+                contents: bytemuck::cast_slice(&glpyh_indicies.clone()),
                 usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -213,6 +216,7 @@ impl State {
                 glpyhs,
                 term_config,
                 glpyh_indicies,
+                glpyh_indicies_buf,
            };
     }
             
@@ -615,30 +619,8 @@ impl State {
         let (mut device, mut queue) = adapter.request_device(&Default::default(),
             None).await.unwrap();
 
-        let texture_size = self.font_atlas.lookup.values().fold(0, |init, acc| {
-            let size = (acc.0.0 * acc.0.1) as u32;
-            if init < size { return size }
-            return init;
-        }).sqrt();
-
-        let texture_desc = wgpu::TextureDescriptor {
-            size: wgpu::Extent3d {
-                width: texture_size,
-                height: texture_size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            usage: wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            label: None,
-            view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb]
-        };
-
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
-            Self::make_render_pipeline(&mut device, texture_desc.format);
+            Self::make_render_pipeline(&mut device, wgpu::TextureFormat::Bgra8UnormSrgb);
         
         // repopulate hashmap in font_atlas
         let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
@@ -650,20 +632,7 @@ impl State {
                               &font_atlas, glpyh_loader, 
                               glpyh_sampler, glpyh_layout));
 
-        let texture = device.create_texture(&texture_desc);
-        let texture_view = texture.create_view(&Default::default());
-
-        // we need this for saving images later
-        let tex_size = (4 * texture.width()).next_multiple_of(256) * texture.height();
-        let glpyh_dgb_buf_desc = wgpu::BufferDescriptor {
-            size: tex_size as u64,
-            usage: wgpu::BufferUsages::COPY_DST
-                // this tells wpgu that we want to read this buffer from the cpu
-                | wgpu::BufferUsages::MAP_READ,
-            label: None,
-            mapped_at_creation: false,
-        };
-         
+        
          // create coords:
         // start pos , bbox width + pos, bbox height + height
         let glpyh_vert: &[Vertex] = &[
@@ -677,11 +646,6 @@ impl State {
             },  // t rh corner
         ];
 
-        let glpyh_indicies: &[u16] = &[
-                0, 1, 2, // bottom LH triangle
-                3, 2, 1
-        ];
-
         // create buffer for position
         let glpyh_positions = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor { 
@@ -690,15 +654,51 @@ impl State {
                 usage: wgpu::BufferUsages::VERTEX,
         });
 
-        // create buffer for position
-        let glpyh_indicies = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor { 
+        let glpyh_indicies_buf = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor{
                 label: Some("dgb buffer indicies"),
-                contents: bytemuck::cast_slice(glpyh_indicies),
-                usage: wgpu::BufferUsages::INDEX,
-        });
+                contents: bytemuck::cast_slice(&self.glpyh_indicies.as_slice()),
+                usage: wgpu::BufferUsages::INDEX
+            });
 
+        // recreate loader to get texture sizes
+        let glpyh_loader = GlpyhLoader::new(self.term_config.clone());
         for (glpyh, bindgroup) in glpyhs {
+            
+            let Some((bbox, _)) = glpyh_loader.glpyh_map.get(&glpyh)
+                else { panic!("no bbox for glpyhs debugging") };
+
+            let texture_desc = wgpu::TextureDescriptor {
+                size: wgpu::Extent3d {
+                    width: bbox.width as u32,
+                    height: bbox.height as u32,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                usage: wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                label: None,
+                view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb]
+            };
+
+            let texture = device.create_texture(&texture_desc);
+            let texture_view = texture.create_view(&Default::default());
+
+            // we need this for saving images later
+            let tex_size = (4 * texture.width()).next_multiple_of(256) * texture.height();
+
+            let glpyh_dgb_buf_desc = wgpu::BufferDescriptor {
+                size: tex_size as u64,
+                usage: wgpu::BufferUsages::MAP_READ
+                    | wgpu::BufferUsages::COPY_DST,
+                label: None,
+                mapped_at_creation: false,
+            };
+     
+     
             let mut encoder = device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Debug Encoder"),
@@ -716,9 +716,9 @@ impl State {
                                     g: 0.0,
                                     r: 0.0,
                                     b: 0.0,
-                                    a: 0.0,
+                                    a: 1.0,
                                 }),
-                                store: false,
+                                store: true,
                             },
                         })],
                         depth_stencil_attachment: None,
@@ -729,7 +729,7 @@ impl State {
                 // hack into render pipeline to render glpyh for dbg purposes
                 render_pass.set_bind_group(0, &bindgroup, &[]);
                 render_pass.set_vertex_buffer(0, glpyh_positions.slice(..));
-                render_pass.set_index_buffer(glpyh_indicies.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.set_index_buffer(glpyh_indicies_buf.slice(..), wgpu::IndexFormat::Uint16);
                 render_pass.draw_indexed(0..4, 1, 0..1);
                 println!("glpyh drawn");
             }
@@ -752,6 +752,7 @@ impl State {
 
             // submit copy
             queue.submit(iter::once(encoder.finish()));
+            device.poll(wgpu::Maintain::Wait);
             
 
             println!("glpyh copied to buf");
@@ -774,10 +775,14 @@ impl State {
                 // save the glpyh to .png
                 use image::{ImageBuffer, Rgba};
                 let width = (texture.width() * 4).next_multiple_of(256).div_ceil(4);
-                let buffer =
+                let Some(buffer) =
                    ImageBuffer::<Rgba<u8>, _>::from_raw(width, 
                                                          texture.height(),
-                                                         data).unwrap();
+                                                         data.as_slice()) else {
+                       println!("no glpyh printed to debug - QUIET FAIL");
+                       return;
+                   };
+
                 let result = buffer.save(format!("glpyh_{}.png", glpyh.to_string()));
                 if let Err(e) = result {
                     println!("glpyh formatting error, glpyh: {}, error: {}",
@@ -792,6 +797,8 @@ impl State {
             }
             glpyh_dbg_buf.unmap();
         }
+
+        return;
     }                   
 
 
@@ -821,7 +828,7 @@ impl State {
                                         g: 0.0,
                                         r: 0.0,
                                         b: 0.0,
-                                        a: 0.0,
+                                        a: 1.0,
                                     }),
                                     store: false,
                                 },
@@ -846,7 +853,7 @@ impl State {
                                         render_pass.set_bind_group(0, &glpyh, &[]);
                                         render_pass.set_vertex_buffer(0, 
                                                                       positions.slice(..));
-                                        render_pass.set_index_buffer(self.glpyh_indicies.slice(..), wgpu::IndexFormat::Uint16);
+                                        render_pass.set_index_buffer(self.glpyh_indicies_buf.slice(..), wgpu::IndexFormat::Uint16);
                                         render_pass.draw_indexed(0..4, 1, 0..1);
                                         #[cfg(debug_assertions)]
                                         println!("pixels rendered for glpyh {}", &chr);
