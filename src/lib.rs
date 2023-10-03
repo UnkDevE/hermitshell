@@ -412,9 +412,9 @@ impl State {
 
             let data = buffer_slice.get_mapped_range();
 
-
             #[cfg(debug_assertions)]
             println!("font_atlas lookup glpyh {}", glpyh);
+
             {
                 #[cfg(debug_assertions)]
                 println!("polling device for glpyh {} started", glpyh);
@@ -478,6 +478,18 @@ impl State {
                         aspect: wgpu_types::TextureAspect::All, 
                     }, tex_size);
                 */
+
+                #[cfg(debug_assertions)]
+                {
+                    if let Ok(res) = 
+                        image::save_buffer(format!("make_glpyh_{}.png", glpyh), 
+                                           &data.as_slice()[0..
+                             (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)],
+                             bbox.width as u32, bbox.height as u32, image::ColorType::Rgb8) {}
+                    else {
+                        println!("make_glpyh_{}.png not saved", glpyh);
+                    }
+                }
 
                 queue.write_texture(
                     glpyh_tex.as_image_copy(), 
@@ -543,9 +555,8 @@ impl State {
             #[cfg(debug_assertions)]
             println!("finished glpyh queue polling");
 
-            // clean up glpyh mapped in font_atlas code
+            // we do this in dtor not ctor 
             // glpyh_buf.unmap
-            // we do this in dtor not ctor xD
         }
         return glpyhs;
     }
