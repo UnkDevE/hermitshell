@@ -91,7 +91,7 @@ impl GlpyhLoader {
                 size,
                 usage: wgpu::BufferUsages::MAP_READ |
                         wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
+                mapped_at_creation: false,
             });
             
             queue.write_buffer(&glpyh_buf, 0, data);

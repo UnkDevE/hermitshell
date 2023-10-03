@@ -399,6 +399,19 @@ impl State {
                 = glpyh_loader.get_glpyh_data(*glpyh, device, queue).await
                     else { panic!("no glpyh found for {}", glpyh); };
 
+            let buffer_slice = glpyh_buf.slice(..);
+            
+            // NOTE: We have to create the mapping THEN device.poll() before await
+            // the future. Otherwise the application will freeze.
+            let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+            buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                tx.send(result).unwrap();
+            });
+            device.poll(wgpu::Maintain::Wait);
+            rx.receive().await.unwrap().unwrap();
+
+            let data = buffer_slice.get_mapped_range();
+
 
             #[cfg(debug_assertions)]
             println!("font_atlas lookup glpyh {}", glpyh);
@@ -468,9 +481,8 @@ impl State {
 
                 queue.write_texture(
                     glpyh_tex.as_image_copy(), 
-                    glpyh_buf.slice(0..
-                             ((bbox.width * 4).next_multiple_of(256) * bbox.height))
-                        .get_mapped_range().as_slice(), 
+                    &data.as_slice()[0..
+                             (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)],
                     ImageDataLayout { 
                         offset: 0, 
                         bytes_per_row: Some((bbox.width * 4).next_multiple_of(256) as u32),
@@ -532,7 +544,8 @@ impl State {
             println!("finished glpyh queue polling");
 
             // clean up glpyh mapped in font_atlas code
-            glpyh_buf.unmap();
+            // glpyh_buf.unmap
+            // we do this in dtor not ctor xD
         }
         return glpyhs;
     }
@@ -707,16 +720,16 @@ impl State {
             {
                 let mut render_pass = encoder.begin_render_pass(
                     &wgpu::RenderPassDescriptor {
-                        label: Some("Render Pass"),
+                        label: Some("debug Render Pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &texture_view,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    g: 0.0,
+                                    g: 1.0,
                                     r: 0.0,
                                     b: 0.0,
-                                    a: 1.0,
+                                    a: 0.0,
                                 }),
                                 store: true,
                             },
@@ -735,7 +748,11 @@ impl State {
             }
             // don't present output
             let glpyh_dbg_buf = device.create_buffer(&glpyh_dgb_buf_desc);
-
+            let mut encoder = device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Debug Encoder"),
+            });
+ 
             // save into buf from texture
             let width = texture.width();
             encoder.copy_texture_to_buffer(
@@ -828,7 +845,7 @@ impl State {
                                         g: 0.0,
                                         r: 0.0,
                                         b: 0.0,
-                                        a: 1.0,
+                                        a: 0.0,
                                     }),
                                     store: false,
                                 },
