@@ -482,17 +482,13 @@ impl State {
                 let width = (bbox.width * 4).next_multiple_of(256).div_ceil(4) as u32;
                 #[cfg(debug_assertions)]
                 {
-                    use image::{Rgba, ImageBuffer};
-                    match(image::load_from_memory(&data.as_slice()[0..
-                             (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)])){
-                        Ok(im) => {
-                            match(im.save(&format!("make_glpyh_{}", glpyh))){
-                                Err(e) => { 
-                                    println!("image error saving glpyh {}, error {}", glpyh, e); 
-                                }
-                                Ok(()) => {}
-                            }
-                        }
+                    use image::{Rgba, ImageBuffer, ColorType};
+                    match image::save_buffer_with_format(&format!("make_glpyh_{}.png", glpyh),
+                        &data.as_slice()[0..
+                             (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)], 
+                        width, bbox.height as u32,
+                             ColorType::Rgba8, image::ImageFormat::Png){
+                        Ok(()) => {}
                         Err(e) => {
                             println!("make_glpyh_{}.png not saved buf error - {}", glpyh, e);
                         }
