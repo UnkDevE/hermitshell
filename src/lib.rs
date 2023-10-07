@@ -428,9 +428,10 @@ impl State {
                 let Some((bbox, _)) = glpyh_loader.glpyh_map.get(glpyh) else 
                     {panic!("no lookup for glpyh")};
 
+                let width = (bbox.width * 4).next_multiple_of(256).div_ceil(4) as u32;
                 let tex_size = wgpu::Extent3d{
                             height: bbox.height as u32, 
-                            width: (bbox.width as u32 * 4).next_multiple_of(256).div_ceil(4),
+                            width, 
                             depth_or_array_layers: 1
                         };
 
@@ -479,14 +480,13 @@ impl State {
                     }, tex_size);
                 */
 
-                let width = (bbox.width * 4).next_multiple_of(256).div_ceil(4) as u32;
                 #[cfg(debug_assertions)]
                 {
-                    use image::{Rgba, ImageBuffer, ColorType};
+                    use image::ColorType;
                     match image::save_buffer_with_format(&format!("make_glpyh_{}.png", glpyh),
                         &data.as_slice()[0..
                              (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)], 
-                        width, bbox.height as u32,
+                        width as u32, bbox.height as u32,
                              ColorType::Rgba8, image::ImageFormat::Png){
                         Ok(()) => {}
                         Err(e) => {
@@ -500,7 +500,7 @@ impl State {
                     &data.as_slice()[0..
                              (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)],
                     ImageDataLayout { 
-                        offset: 0, 
+                        offset: 0,
                         bytes_per_row: Some((bbox.width * 4).next_multiple_of(256) as u32),
                         rows_per_image: Some(bbox.height as u32)
                     }, 

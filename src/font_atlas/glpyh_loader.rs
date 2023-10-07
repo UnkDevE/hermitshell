@@ -73,6 +73,21 @@ impl GlpyhLoader {
         return Self {glpyh_map};
     }
 
+    // pads data from row_width to offset
+    // is in U8 bytes or pixels
+    // not rgba values
+    fn padder(offset : u64, row_width: u64, mut data: Vec<u8>) -> Vec<u8>{
+        let chunks = data.chunks_exact_mut(row_width as usize);
+        let mut padded : Vec<u8> = vec![];
+        for chunk in chunks {
+            let mut row = chunk.to_owned();
+            row.append(&mut vec![0 as u8; offset as usize]);
+            padded.append(&mut row);
+        }
+        return padded;
+
+    }
+
     pub async fn get_glpyh_data(&self, glpyh: char, 
                                 device : &mut wgpu::Device, 
                                 queue: &mut wgpu::Queue) -> Option<wgpu::Buffer> {
@@ -85,6 +100,13 @@ impl GlpyhLoader {
             let size = 
                 bbox.height * (4 * bbox.width).next_multiple_of(256); 
 
+            // calculate the offset for each row,
+            // so bytes wrap round to the next row of the image
+            let offset = (bbox.width * 4).next_multiple_of(256) - (bbox.width * 4);
+            let padded = 
+                GlpyhLoader::padder(offset, bbox.width * 4, data.to_owned());
+            
+
             use wgpu::BufferDescriptor;
             let glpyh_buf = device.create_buffer(&BufferDescriptor{
                 label: Some(&format!("glpyh {} buf internal", glpyh)),
@@ -94,7 +116,7 @@ impl GlpyhLoader {
                 mapped_at_creation: false,
             });
             
-            queue.write_buffer(&glpyh_buf, 0, data);
+            queue.write_buffer(&glpyh_buf, 0, &padded);
 
             use std::iter;
             queue.submit(iter::once(encoder.finish()));
