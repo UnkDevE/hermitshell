@@ -67,6 +67,7 @@ pub struct State {
     term_config: TermConfig,
     glpyh_indicies: [u16;6],
     glpyh_indicies_buf: wgpu::Buffer,
+    glpyh_loader : GlpyhLoader,
 }
 
 pub struct ShellBuf {
@@ -185,7 +186,7 @@ impl State {
 
         let glpyhs = Self::make_glpyhs(&mut device, &mut queue, 
                                        &font_atlas, 
-                                       glpyh_loader, glpyh_sampler, glpyh_layout).await;
+                                       &glpyh_loader, glpyh_sampler, glpyh_layout).await;
      
         // controls indicies for debug code and render
         let glpyh_indicies: [u16;6] = [
@@ -217,6 +218,7 @@ impl State {
                 term_config,
                 glpyh_indicies,
                 glpyh_indicies_buf,
+                glpyh_loader
            };
     }
             
@@ -380,7 +382,7 @@ impl State {
 
 
        pub async fn make_glpyhs(device: &mut wgpu::Device, 
-                                queue: &mut wgpu::Queue, font_atlas: &FontAtlas, glpyh_loader: GlpyhLoader,
+                                queue: &mut wgpu::Queue, font_atlas: &FontAtlas, glpyh_loader: &GlpyhLoader,
                                 glpyh_sampler: wgpu::Sampler, glpyh_layout: wgpu::BindGroupLayout) -> 
         HashMap<char, wgpu::BindGroup> {
 
@@ -523,10 +525,11 @@ impl State {
                 // submit queue 
                 // should only do this once in future revisions
                 queue.submit(iter::once(glpyh_encoder.finish()));
+                device.poll(wgpu::Maintain::Wait);
 
-                // write texture to bindgroup using device.
-                glpyhs.insert(*glpyh, device.create_bind_group(
+                let binder = device.create_bind_group(
                     &wgpu::BindGroupDescriptor {
+                        label: Some(&format!("glpyh_bindgroup_{}", *glpyh)),
                         layout: &glpyh_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
@@ -540,13 +543,15 @@ impl State {
                                     Sampler(&glpyh_sampler),
                             }
                         ],
-                        label: Some(&format!("glpyh bindgroup {}", *glpyh))
-                    }
-                ));
+                    });
+
+                // write texture to bindgroup using device.
+                glpyhs.insert(*glpyh, binder);
 
                 #[cfg(debug_assertions)]
                 println!("glpyh {} inserted to hashmap", *glpyh);
 
+                device.poll(wgpu::Maintain::Wait);
                 #[cfg(debug_assertions)]
                 println!("polling device for glpyh {} complete", glpyh);
             }
@@ -653,15 +658,10 @@ impl State {
         // repopulate hashmap in font_atlas
         let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
                                         &mut queue);
-        let glpyh_loader = GlpyhLoader::new(self.term_config.clone());
-        // create second set of bindgroups HOT call
-        let glpyhs = 
-            pollster::block_on(Self::make_glpyhs(&mut device, &mut queue, 
-                              &font_atlas, glpyh_loader, 
-                              glpyh_sampler, glpyh_layout));
-
+        // we copy glpyhs from self
+        let glpyhs = &self.glpyhs;
         
-         // create coords:
+        // create coords:
         // start pos , bbox width + pos, bbox height + height
         let glpyh_vert: &[Vertex] = &[
             Vertex { position: [0.0, 0.0, 0.0],
@@ -690,10 +690,9 @@ impl State {
             });
 
         // recreate loader to get texture sizes
-        let glpyh_loader = GlpyhLoader::new(self.term_config.clone());
         for (glpyh, bindgroup) in glpyhs {
             
-            let Some((bbox, _)) = glpyh_loader.glpyh_map.get(&glpyh)
+            let Some((bbox, _)) = self.glpyh_loader.glpyh_map.get(&glpyh)
                 else { panic!("no bbox for glpyhs debugging") };
 
             let texture_desc = wgpu::TextureDescriptor {
@@ -708,7 +707,7 @@ impl State {
                 format: wgpu::TextureFormat::Bgra8UnormSrgb,
                 usage: wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                label: None,
+                label: Some("dgb texture desc"),
                 view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb]
             };
 
@@ -722,8 +721,8 @@ impl State {
                 size: tex_size as u64,
                 usage: wgpu::BufferUsages::MAP_READ
                     | wgpu::BufferUsages::COPY_DST,
-                label: None,
-                mapped_at_creation: false,
+                label: Some("dgb buf desc"),
+                mapped_at_creation: true,
             };
      
      
@@ -752,12 +751,12 @@ impl State {
                         depth_stencil_attachment: None,
                     });
                 render_pass.set_pipeline(&render_pipeline);
-                println!("rendering glpyh {} for dgb", glpyh);
 
                 // hack into render pipeline to render glpyh for dbg purposes
                 render_pass.set_bind_group(0, &bindgroup, &[]);
                 render_pass.set_vertex_buffer(0, glpyh_positions.slice(..));
                 render_pass.set_index_buffer(glpyh_indicies_buf.slice(..), wgpu::IndexFormat::Uint16);
+                println!("rendering glpyh {} for dgb", glpyh);
                 render_pass.draw_indexed(0..4, 1, 0..1);
                 println!("glpyh drawn");
             }
@@ -765,7 +764,7 @@ impl State {
             let glpyh_dbg_buf = device.create_buffer(&glpyh_dgb_buf_desc);
             let mut encoder = device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Debug Encoder"),
+                label: Some("dgb buf Encoder"),
             });
  
             // save into buf from texture
@@ -785,6 +784,9 @@ impl State {
             // submit copy
             queue.submit(iter::once(encoder.finish()));
             device.poll(wgpu::Maintain::Wait);
+
+            // unmap dbg buffer
+            glpyh_dbg_buf.unmap();
             
 
             println!("glpyh copied to buf");
@@ -827,8 +829,9 @@ impl State {
                     println!("Unknown image formatting error");
                 }
             }
-            glpyh_dbg_buf.unmap();
         }
+
+        // CLEANUP BINDGROUPS 
 
         return;
     }                   
