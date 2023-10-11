@@ -184,9 +184,10 @@ impl State {
 
         let glpyh_loader = GlpyhLoader::new(term_config.clone());
 
-        let glpyhs = Self::make_glpyhs(&mut device, &mut queue, 
-                                       &font_atlas, 
-                                       &glpyh_loader, glpyh_sampler, glpyh_layout).await;
+        let glpyhs = pollster::block_on(Self::make_glpyhs(&mut device, &mut queue, 
+                                       //&font_atlas, 
+                                       &glpyh_loader, 
+                                       glpyh_sampler, glpyh_layout));
      
         // controls indicies for debug code and render
         let glpyh_indicies: [u16;6] = [
@@ -382,7 +383,8 @@ impl State {
 
 
        pub async fn make_glpyhs(device: &mut wgpu::Device, 
-                                queue: &mut wgpu::Queue, font_atlas: &FontAtlas, glpyh_loader: &GlpyhLoader,
+                                queue: &mut wgpu::Queue, // font_atlas: &FontAtlas, 
+                                glpyh_loader: &GlpyhLoader,
                                 glpyh_sampler: wgpu::Sampler, glpyh_layout: wgpu::BindGroupLayout) -> 
         HashMap<char, wgpu::BindGroup> {
 
@@ -553,7 +555,7 @@ impl State {
 
                 device.poll(wgpu::Maintain::Wait);
                 #[cfg(debug_assertions)]
-                println!("polling device for glpyh {} complete", glpyh);
+                println!("polling device for glpyh {} complete", *glpyh);
             }
 
             #[cfg(debug_assertions)]
@@ -656,10 +658,14 @@ impl State {
             Self::make_render_pipeline(&mut device, wgpu::TextureFormat::Bgra8UnormSrgb);
         
         // repopulate hashmap in font_atlas
-        let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
-                                        &mut queue);
+        // let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
+        //                               &mut queue);
         // we copy glpyhs from self
-        let glpyhs = &self.glpyhs;
+        let glpyh_loader_dgb = GlpyhLoader::new(self.term_config.clone());
+        let glpyhs = pollster::block_on(
+            Self::make_glpyhs(&mut device, &mut queue, // &mut font_atlas, 
+                                       &glpyh_loader_dgb, glpyh_sampler, glpyh_layout)
+            );
         
         // create coords:
         // start pos , bbox width + pos, bbox height + height
@@ -740,9 +746,9 @@ impl State {
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    b: 0.0,
                                     g: 1.0,
                                     r: 0.0,
-                                    b: 0.0,
                                     a: 0.0,
                                 }),
                                 store: true,
@@ -781,13 +787,13 @@ impl State {
                 },
                 texture.size());
 
-            // submit copy
-            queue.submit(iter::once(encoder.finish()));
-            device.poll(wgpu::Maintain::Wait);
-
             // unmap dbg buffer
             glpyh_dbg_buf.unmap();
             
+
+            // submit copy
+            queue.submit(iter::once(encoder.finish()));
+            device.poll(wgpu::Maintain::Wait);
 
             println!("glpyh copied to buf");
 
@@ -829,10 +835,11 @@ impl State {
                     println!("Unknown image formatting error");
                 }
             }
+            
+            // second unmap to cleanup read
+            glpyh_dbg_buf.unmap();
         }
-
-        // CLEANUP BINDGROUPS 
-
+        // todo: CLEANUP BINDGROUPS 
         return;
     }                   
 
