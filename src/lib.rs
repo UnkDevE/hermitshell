@@ -61,7 +61,7 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     pub size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
-    pub font_atlas: FontAtlas,
+    // pub font_atlas: FontAtlas,
     glpyhs: HashMap<char, wgpu::BindGroup>,
     pub shell_buf : ShellBuf,
     term_config: TermConfig,
@@ -99,9 +99,11 @@ impl State {
         let (surface, mut device, mut queue, config) = 
             Self::surface_config(window).await;
 
+        /*
         // load fontatlas
         let font_atlas = FontAtlas::new(term_config.clone(), &mut device,
                                         &mut queue);
+
         #[cfg(debug_assertions)]
         {
             println!("atlas texture complete creating dbg buffer...");
@@ -178,7 +180,7 @@ impl State {
             }
             font_buf.unmap();
         } 
-
+        */
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
             Self::make_render_pipeline(&mut device, config.format); 
 
@@ -192,7 +194,7 @@ impl State {
         // controls indicies for debug code and render
         let glpyh_indicies: [u16;6] = [
             0, 1, 2,
-            0, 2, 3, 
+            1, 2, 3, 
         ];
 
         // create buffer for position
@@ -211,7 +213,7 @@ impl State {
                 config,
                 size: window.inner_size(),
                 render_pipeline,
-                font_atlas,
+                // font_atlas,
                 shell_buf: ShellBuf{
                     string_buf: String::new(), glpyhs_pos: vec![]
                 },
@@ -591,12 +593,12 @@ impl State {
         let mut start : (f32, f32) = (0.0,0.0);
         for line in self.shell_buf.string_buf.lines(){
             for cbuf_char in line.chars() {
-                let Some(bbox) = self.font_atlas.lookup.get(&cbuf_char) else 
+                let Some((bbox, _)) = self.glpyh_loader.glpyh_map.get(&cbuf_char) else 
                     { continue; };    
 
                 let bbox_normalized = 
-                    ((bbox.0.0 as f64 / self.config.width as f64) as f32,
-                     (bbox.0.1 as f64 / self.config.height as f64) as f32);
+                    ((bbox.width as f64 / self.config.width as f64) as f32,
+                     (bbox.height as f64 / self.config.height as f64) as f32);
                 // add poisition for next char
                 start.0 += bbox_normalized.0; // set as width
                 // if start smaller than bbox then set as bbox 
@@ -655,12 +657,12 @@ impl State {
             None).await.unwrap();
 
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
-            Self::make_render_pipeline(&mut device, wgpu::TextureFormat::Bgra8UnormSrgb);
+            Self::make_render_pipeline(&mut device, wgpu::TextureFormat::Rgba8UnormSrgb);
         
         // repopulate hashmap in font_atlas
         // let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
         //                               &mut queue);
-        // we copy glpyhs from self
+        // we create new bindgoups and glpyhs so no overlap
         let glpyh_loader_dgb = GlpyhLoader::new(self.term_config.clone());
         let glpyhs = pollster::block_on(
             Self::make_glpyhs(&mut device, &mut queue, // &mut font_atlas, 
@@ -701,20 +703,22 @@ impl State {
             let Some((bbox, _)) = self.glpyh_loader.glpyh_map.get(&glpyh)
                 else { panic!("no bbox for glpyhs debugging") };
 
+            let label = format!("dgb desc glpyh {}", glpyh);
+            let width = (4 * bbox.width).next_multiple_of(256).div_ceil(4) as u32;
             let texture_desc = wgpu::TextureDescriptor {
                 size: wgpu::Extent3d {
-                    width: bbox.width as u32,
+                    width,
                     height: bbox.height as u32,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                label: Some("dgb texture desc"),
-                view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb]
+                label: Some(&label),
+                view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb]
             };
 
             let texture = device.create_texture(&texture_desc);
@@ -727,27 +731,26 @@ impl State {
                 size: tex_size as u64,
                 usage: wgpu::BufferUsages::MAP_READ
                     | wgpu::BufferUsages::COPY_DST,
-                label: Some("dgb buf desc"),
-                mapped_at_creation: true,
+                label: Some(&label),
+                mapped_at_creation: false,
             };
      
-     
-            let mut encoder = device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Debug Encoder"),
+            let mut encoder = device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("Render Debug Encoder"),
             });
+
             // encap for secuirty
             {
-                let mut render_pass = encoder.begin_render_pass(
-                    &wgpu::RenderPassDescriptor {
+                let render_desc = wgpu::RenderPassDescriptor {
                         label: Some("debug Render Pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &texture_view,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    b: 0.0,
                                     g: 1.0,
+                                    b: 0.0,
                                     r: 0.0,
                                     a: 0.0,
                                 }),
@@ -755,7 +758,9 @@ impl State {
                             },
                         })],
                         depth_stencil_attachment: None,
-                    });
+                    };
+
+                let mut render_pass = encoder.begin_render_pass(&render_desc);
                 render_pass.set_pipeline(&render_pipeline);
 
                 // hack into render pipeline to render glpyh for dbg purposes
@@ -763,38 +768,33 @@ impl State {
                 render_pass.set_vertex_buffer(0, glpyh_positions.slice(..));
                 render_pass.set_index_buffer(glpyh_indicies_buf.slice(..), wgpu::IndexFormat::Uint16);
                 println!("rendering glpyh {} for dgb", glpyh);
-                render_pass.draw_indexed(0..4, 1, 0..1);
-                println!("glpyh drawn");
+                render_pass.draw_indexed(0..4, 0, 0..1);
+                println!("glpyh drawn"); 
             }
+
             // don't present output
             let glpyh_dbg_buf = device.create_buffer(&glpyh_dgb_buf_desc);
-            let mut encoder = device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("dgb buf Encoder"),
-            });
+
+            let u32_size = std::mem::size_of::<u32>() as u32;
  
             // save into buf from texture
-            let width = texture.width();
             encoder.copy_texture_to_buffer(
                 texture.as_image_copy(),
                 wgpu::ImageCopyBuffer {
                     buffer: &glpyh_dbg_buf,
                     layout: wgpu::ImageDataLayout {
                         offset: 0,
-                        bytes_per_row: Some((4 * width).next_multiple_of(256)),
+                        bytes_per_row: Some((u32_size * width).next_multiple_of(256)),
                         rows_per_image: Some(texture.height()),
                     },
                 },
                 texture.size());
 
-            // unmap dbg buffer
-            glpyh_dbg_buf.unmap();
             
+            // submit render + copy, no poll
+            queue.submit(Some(encoder.finish()));
 
-            // submit copy
-            queue.submit(iter::once(encoder.finish()));
-            device.poll(wgpu::Maintain::Wait);
-
+            #[cfg(debug_assertions)]
             println!("glpyh copied to buf");
 
             // pull out the image from buffer
@@ -811,10 +811,8 @@ impl State {
                 rx.receive().await.unwrap().unwrap();
 
                 let data = buffer_slice.get_mapped_range();
-
                 // save the glpyh to .png
                 use image::{ImageBuffer, Rgba};
-                let width = (texture.width() * 4).next_multiple_of(256).div_ceil(4);
                 let Some(buffer) =
                    ImageBuffer::<Rgba<u8>, _>::from_raw(width, 
                                                          texture.height(),
@@ -829,21 +827,19 @@ impl State {
                                 glpyh, e);
                 }
                 else if let Ok(()) = result {
-                    println!("glpyh {} saved as glpyh_{}.png", glpyh, glpyh); 
+                    println!("rendered and saved as glpyh_{}.png", glpyh); 
                 }
                 else {
                     println!("Unknown image formatting error");
                 }
             }
-            
-            // second unmap to cleanup read
+            // unmap the output buffer
             glpyh_dbg_buf.unmap();
         }
-        // todo: CLEANUP BINDGROUPS 
+            
+
         return;
-    }                   
-
-
+    }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
@@ -903,11 +899,14 @@ impl State {
                             }
                         }
                     }
+                
                 }
             }
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
 
-        Ok(())
+        return Ok(());
     }
 }
+
+
