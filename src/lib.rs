@@ -707,7 +707,7 @@ impl State {
             let width = (4 * bbox.width).next_multiple_of(256).div_ceil(4) as u32;
             let texture_desc = wgpu::TextureDescriptor {
                 size: wgpu::Extent3d {
-                    width,
+                    width: bbox.width as u32,
                     height: bbox.height as u32,
                     depth_or_array_layers: 1,
                 },
