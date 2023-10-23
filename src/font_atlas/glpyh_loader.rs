@@ -39,22 +39,23 @@ impl GlpyhLoader {
                 face.rasterize_indexed_subpixel(id.into(), font_size);
                         // use px 
 
+
+            // convert rgb to bgr
+            let mut bgr: Vec<u8> = Vec::new();
+            for channel in glyph.chunks(3) {
+                let mut rgb_chunk = Vec::from(channel);
+                rgb_chunk.reverse();
+                bgr.append(&mut rgb_chunk);
+            }
+
             // no aplha so we create ours with 255 init
-            let mut rgba = Vec::new();
+            let mut bgra = Vec::new();
             for channels in glyph.chunks(3) {
                 let mut pixel = Vec::from(channels);
                 pixel.push(255);
-                rgba.append(&mut pixel);
-            }
+                bgra.append(&mut pixel);
+            }           
 
-            // convert rgba to bgra
-            let mut bgra: Vec<u8> = Vec::new();
-            for channel in rgba.chunks(4) {
-                let mut bgra_chunk = Vec::from(channel);
-                bgra_chunk.reverse();
-                bgra.append(&mut bgra_chunk);
-            }
-            
             // push pixel data 
             // null char has problems with encoding
             if  !(metrics.width == 0 || metrics.height == 0 || glyph_c == '\0') {
@@ -105,7 +106,18 @@ impl GlpyhLoader {
             let offset = (bbox.width * 4).next_multiple_of(256) - (bbox.width * 4);
             let padded = 
                 GlpyhLoader::padder(offset, bbox.width * 4, data.to_owned());
+           
             
+            #[cfg(debug_assertions)]
+            {
+                match image::save_buffer(&format!("get_glpyh_{}.png", glpyh), data.as_slice(), 
+                                   bbox.width as u32, bbox.height as u32, image::ColorType::Rgba8) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        println!("glpyh {} error {}", glpyh, e);
+                    }
+                }
+            }
 
             use wgpu::BufferDescriptor;
             let glpyh_buf = device.create_buffer(&BufferDescriptor{

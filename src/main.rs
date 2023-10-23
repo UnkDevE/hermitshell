@@ -67,8 +67,8 @@ pub async fn run(){
     
     // impl state
     let mut state = State::new(&window, TermConfig {font_dir, font_size: 24.0}).await;
-    // println!("GLPYH DEBUG STARTED");
-    // pollster::block_on(state.debug_glpyhs());
+    println!("GLPYH DEBUG STARTED");
+    pollster::block_on(state.debug_glpyhs());
 
     // make buffers
     let mut command_str = read_from_pty(&mut reader);

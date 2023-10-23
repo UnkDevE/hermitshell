@@ -357,7 +357,6 @@ impl State {
                         wgpu::Limits::default()
                     },
                 },
-                #[cfg(debug_assertions)]
                 None, // Some(&std::path::Path::new("trace")), // Trace path
                 #[cfg(not(debug_assertions))]
                 None,
@@ -486,6 +485,17 @@ impl State {
                     }, tex_size);
                 */
 
+                queue.write_texture(
+                    glpyh_tex.as_image_copy(), 
+                    &data.as_slice()[0..
+                             (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)],
+                    ImageDataLayout { 
+                        offset: 0,
+                        bytes_per_row: Some((bbox.width * 4).next_multiple_of(256) as u32),
+                        rows_per_image: Some(bbox.height as u32)
+                    }, 
+                    tex_size);
+
                 #[cfg(debug_assertions)]
                 {
                     use image::ColorType;
@@ -500,19 +510,6 @@ impl State {
                         }
                     }
                 }
-
-                queue.write_texture(
-                    glpyh_tex.as_image_copy(), 
-                    &data.as_slice()[0..
-                             (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)],
-                    ImageDataLayout { 
-                        offset: 0,
-                        bytes_per_row: Some((bbox.width * 4).next_multiple_of(256) as u32),
-                        rows_per_image: Some(bbox.height as u32)
-                    }, 
-                    tex_size);
-
-                
 
                // create view for bindgroup
                 let view = glpyh_tex.create_view(&wgpu::TextureViewDescriptor { 
@@ -707,7 +704,7 @@ impl State {
             let width = (4 * bbox.width).next_multiple_of(256).div_ceil(4) as u32;
             let texture_desc = wgpu::TextureDescriptor {
                 size: wgpu::Extent3d {
-                    width: bbox.width as u32,
+                    width,
                     height: bbox.height as u32,
                     depth_or_array_layers: 1,
                 },
@@ -718,14 +715,14 @@ impl State {
                 usage: wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 label: Some(&label),
-                view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb]
+                view_formats: &[]
             };
 
             let texture = device.create_texture(&texture_desc);
             let texture_view = texture.create_view(&Default::default());
 
             // we need this for saving images later
-            let tex_size = (4 * texture.width()).next_multiple_of(256) * texture.height();
+            let tex_size = ((4 * bbox.width as u32).next_multiple_of(256) * texture.height()) as u32;
 
             let glpyh_dgb_buf_desc = wgpu::BufferDescriptor {
                 size: tex_size as u64,
@@ -734,7 +731,7 @@ impl State {
                 label: Some(&label),
                 mapped_at_creation: false,
             };
-     
+    
             let mut encoder = device.create_command_encoder(
                 &wgpu::CommandEncoderDescriptor {
                     label: Some("Render Debug Encoder"),
@@ -752,7 +749,7 @@ impl State {
                                     g: 1.0,
                                     b: 0.0,
                                     r: 0.0,
-                                    a: 0.0,
+                                    a: 1.0,
                                 }),
                                 store: true,
                             },
@@ -771,7 +768,7 @@ impl State {
                 render_pass.draw_indexed(0..4, 0, 0..1);
                 println!("glpyh drawn"); 
             }
-
+ 
             // don't present output
             let glpyh_dbg_buf = device.create_buffer(&glpyh_dgb_buf_desc);
 
@@ -779,19 +776,24 @@ impl State {
  
             // save into buf from texture
             encoder.copy_texture_to_buffer(
-                texture.as_image_copy(),
+                wgpu::ImageCopyTexture {
+                    aspect: wgpu::TextureAspect::All,
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                },
                 wgpu::ImageCopyBuffer {
                     buffer: &glpyh_dbg_buf,
                     layout: wgpu::ImageDataLayout {
                         offset: 0,
-                        bytes_per_row: Some((u32_size * width).next_multiple_of(256)),
+                        bytes_per_row: Some((u32_size * texture.width()).next_multiple_of(256)),
                         rows_per_image: Some(texture.height()),
                     },
                 },
-                texture.size());
+                texture_desc.size);
 
-            
-            // submit render + copy, no poll
+
+           // submit render + copy, no poll
             queue.submit(Some(encoder.finish()));
 
             #[cfg(debug_assertions)]
@@ -811,12 +813,14 @@ impl State {
                 rx.receive().await.unwrap().unwrap();
 
                 let data = buffer_slice.get_mapped_range();
+                let slice = &data.as_slice()[0..tex_size as usize]; 
+ 
                 // save the glpyh to .png
                 use image::{ImageBuffer, Rgba};
                 let Some(buffer) =
-                   ImageBuffer::<Rgba<u8>, _>::from_raw(width, 
+                   ImageBuffer::<Rgba<u8>, _>::from_raw(texture.width(),
                                                          texture.height(),
-                                                         data.as_slice()) else {
+                                                         slice) else {
                        println!("no glpyh printed to debug - QUIET FAIL");
                        return;
                    };
