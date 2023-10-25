@@ -194,7 +194,7 @@ impl State {
         // controls indicies for debug code and render
         let glpyh_indicies: [u16;6] = [
             0, 1, 2,
-            1, 2, 3, 
+            0, 2, 3
         ];
 
         // create buffer for position
@@ -487,8 +487,7 @@ impl State {
 
                 queue.write_texture(
                     glpyh_tex.as_image_copy(), 
-                    &data.as_slice()[0..
-                             (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)],
+                    &data.as_slice(),
                     ImageDataLayout { 
                         offset: 0,
                         bytes_per_row: Some((bbox.width * 4).next_multiple_of(256) as u32),
@@ -620,6 +619,23 @@ impl State {
                     // t rh corner
                 ];
 
+                /*
+                // debug code to check if glpyhs are in textures
+                /
+                let glpyh_vert: &[Vertex] = &[
+                    Vertex { position: [0.0, 0.0, 0.0],
+                    tex_coords: [0.0, 0.0], }, // b lh corner
+                    Vertex { position: [0.0, 1.0 
+                        , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
+                    Vertex { position: [1.0, 0.0
+                        ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+                    Vertex { position: [1.0, 1.0, 0.0], 
+                        tex_coords: [1.0,1.0], 
+                    },  // t rh corner
+                ];
+                BUG: they aren't! in textures
+                */
+
                 // create buffer for position
                 let glpyh_buf = self.device.create_buffer_init(
                     &wgpu::util::BufferInitDescriptor { 
@@ -638,9 +654,7 @@ impl State {
 
     // BIG OVERHEAD, creates copy of renderpipline to debug glpyh usage
     pub async fn debug_glpyhs(&mut self) {
-       let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            dx12_shader_compiler: Default::default(),
+       let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), dx12_shader_compiler: Default::default(),
         });
 
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions{
@@ -666,26 +680,6 @@ impl State {
                                        &glpyh_loader_dgb, glpyh_sampler, glpyh_layout)
             );
         
-        // create coords:
-        // start pos , bbox width + pos, bbox height + height
-        let glpyh_vert: &[Vertex] = &[
-            Vertex { position: [0.0, 0.0, 0.0],
-            tex_coords: [0.0, 0.0], }, // b lh corner
-            Vertex { position: [0.0, 1.0
-                , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-            Vertex { position: [1.0, 0.0
-                ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
-            Vertex { position: [1.0, 0.0, 0.0], tex_coords: [1.0,1.0], 
-            },  // t rh corner
-        ];
-
-        // create buffer for position
-        let glpyh_positions = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor { 
-                label: Some("dgb buffer positions"),
-                contents: bytemuck::cast_slice(glpyh_vert),
-                usage: wgpu::BufferUsages::VERTEX,
-        });
 
         let glpyh_indicies_buf = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor{
@@ -697,8 +691,36 @@ impl State {
         // recreate loader to get texture sizes
         for (glpyh, bindgroup) in glpyhs {
             
-            let Some((bbox, _)) = self.glpyh_loader.glpyh_map.get(&glpyh)
-                else { panic!("no bbox for glpyhs debugging") };
+            // create coords:
+            // start pos , bbox width + pos, bbox height + height
+            let Some((bbox, _)) = glpyh_loader_dgb.glpyh_map.get(&glpyh)
+            else { panic!("no bbox for glpyhs debugging") };
+
+            // bbox_normalized for multi char rendering
+            /* let bbox_normalized = 
+                        ((bbox.width as f64 / self.config.width as f64) as f32,
+                         (bbox.height as f64 / self.config.height as f64) as f32);
+                         */
+                   
+            let glpyh_vert: &[Vertex] = &[
+                Vertex { position: [0.0, 0.0, 0.0],
+                tex_coords: [0.0, 0.0], }, // b lh corner
+                Vertex { position: [0.0, 1.0 
+                    , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
+                Vertex { position: [1.0, 0.0
+                    ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+                Vertex { position: [1.0, 1.0, 0.0], 
+                    tex_coords: [1.0,1.0], 
+                },  // t rh corner
+            ];
+
+            // create buffer for position
+            let glpyh_positions = device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor { 
+                    label: Some("dgb buffer positions"),
+                    contents: bytemuck::cast_slice(glpyh_vert),
+                    usage: wgpu::BufferUsages::VERTEX,
+            });    
 
             let label = format!("dgb desc glpyh {}", glpyh);
             let width = (4 * bbox.width).next_multiple_of(256).div_ceil(4) as u32;
@@ -840,8 +862,6 @@ impl State {
             // unmap the output buffer
             glpyh_dbg_buf.unmap();
         }
-            
-
         return;
     }
 

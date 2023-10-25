@@ -40,7 +40,7 @@ impl GlpyhLoader {
                         // use px 
 
 
-            // convert rgb to bgr
+            // convert rgb to bgr 
             let mut bgr: Vec<u8> = Vec::new();
             for channel in glyph.chunks(3) {
                 let mut rgb_chunk = Vec::from(channel);
@@ -49,10 +49,11 @@ impl GlpyhLoader {
             }
 
             // no aplha so we create ours with 255 init
+            // put alpha as 0 when colour is fully black
             let mut bgra = Vec::new();
             for channels in glyph.chunks(3) {
                 let mut pixel = Vec::from(channels);
-                pixel.push(255);
+                if pixel == [0,0,0]{pixel.push(0)} else{pixel.push(255)}
                 bgra.append(&mut pixel);
             }           
 
