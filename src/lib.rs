@@ -436,7 +436,7 @@ impl State {
                 let width = (bbox.width * 4).next_multiple_of(256).div_ceil(4) as u32;
                 let tex_size = wgpu::Extent3d{
                             height: bbox.height as u32, 
-                            width, 
+                            width: bbox.width as u32, 
                             depth_or_array_layers: 1
                         };
 
@@ -610,10 +610,10 @@ impl State {
                 let glpyh_vert: &[Vertex] = &[
                     Vertex { position: [start.0 , start.1, 0.0],
                     tex_coords: [0.0, 0.0], }, // b lh corner
-                    Vertex { position: [start.0 , (start.1 + bbox_normalized.1)
-                        , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-                    Vertex { position: [(start.0 + bbox_normalized.0), start.1 
-                        ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+                    Vertex { position: [start.0 + bbox_normalized.0, start.1
+                        , 0.0], tex_coords: [1.0, 0.0], }, // t lh coner
+                    Vertex { position: [start.0, start.1 + bbox_normalized.1
+                        ,0.0], tex_coords: [0.0, 1.0], }, // b rh corner
                     Vertex { position: [(start.0 + bbox_normalized.0),
                     (start.1 + bbox_normalized.1) ,0.0], tex_coords: [1.0,1.0], },
                     // t rh corner
@@ -654,7 +654,9 @@ impl State {
 
     // BIG OVERHEAD, creates copy of renderpipline to debug glpyh usage
     pub async fn debug_glpyhs(&mut self) {
-       let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), dx12_shader_compiler: Default::default(),
+       let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { 
+           backends: wgpu::Backends::all(),
+           dx12_shader_compiler: Default::default(),
         });
 
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions{
@@ -705,10 +707,10 @@ impl State {
             let glpyh_vert: &[Vertex] = &[
                 Vertex { position: [0.0, 0.0, 0.0],
                 tex_coords: [0.0, 0.0], }, // b lh corner
-                Vertex { position: [0.0, 1.0 
-                    , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-                Vertex { position: [1.0, 0.0
-                    ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+                Vertex { position: [1.0, 0.0 
+                    , 0.0], tex_coords: [1.0, 0.0], }, // t lh coner
+                Vertex { position: [0.0, 1.0
+                    ,0.0], tex_coords: [0.0, 1.0], }, // b rh corner
                 Vertex { position: [1.0, 1.0, 0.0], 
                     tex_coords: [1.0,1.0], 
                 },  // t rh corner
@@ -723,10 +725,9 @@ impl State {
             });    
 
             let label = format!("dgb desc glpyh {}", glpyh);
-            let width = (4 * bbox.width).next_multiple_of(256).div_ceil(4) as u32;
             let texture_desc = wgpu::TextureDescriptor {
                 size: wgpu::Extent3d {
-                    width,
+                    width: bbox.width as u32,
                     height: bbox.height as u32,
                     depth_or_array_layers: 1,
                 },
@@ -835,12 +836,12 @@ impl State {
                 rx.receive().await.unwrap().unwrap();
 
                 let data = buffer_slice.get_mapped_range();
-                let slice = &data.as_slice()[0..tex_size as usize]; 
+                let slice = &data.as_slice()[0..(texture.height() * texture.width()) as usize]; 
  
                 // save the glpyh to .png
                 use image::{ImageBuffer, Rgba};
                 let Some(buffer) =
-                   ImageBuffer::<Rgba<u8>, _>::from_raw(texture.width(),
+                   ImageBuffer::<Rgba<u8>, _>::from_raw((u32_size * texture.width()).next_multiple_of(256).div_ceil(4),
                                                          texture.height(),
                                                          slice) else {
                        println!("no glpyh printed to debug - QUIET FAIL");
