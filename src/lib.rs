@@ -485,27 +485,34 @@ impl State {
                     }, tex_size);
                 */
 
+                let glpyh_slice = 
+                    &data.as_slice()[0..(bbox.width * 4 * bbox.height) as usize];
+
                 queue.write_texture(
                     glpyh_tex.as_image_copy(), 
-                    &data.as_slice(),
+                    glpyh_slice, 
                     ImageDataLayout { 
                         offset: 0,
-                        bytes_per_row: Some((bbox.width * 4).next_multiple_of(256) as u32),
+                        bytes_per_row: Some((bbox.width * 4) as u32),
                         rows_per_image: Some(bbox.height as u32)
                     }, 
                     tex_size);
 
                 #[cfg(debug_assertions)]
                 {
-                    use image::ColorType;
-                    match image::save_buffer_with_format(&format!("make_glpyh_{}.png", glpyh),
-                        &data.as_slice()[0..
-                             (((bbox.width * 4).next_multiple_of(256) * bbox.height) as usize)], 
-                        width as u32, bbox.height as u32,
-                             ColorType::Rgba8, image::ImageFormat::Png){
-                        Ok(()) => {}
-                        Err(e) => {
-                            println!("make_glpyh_{}.png not saved buf error - {}", glpyh, e);
+                    use image::{Rgba, ColorType};
+                    match image::ImageBuffer::<Rgba<u8>,_>::from_raw(
+                       width as u32, bbox.height as u32, glpyh_slice){
+                        Some(im) => { 
+                           match im.save(format!("make_glpyh_{}.png", glpyh)) {
+                                Ok(()) => { println!("make_glpyh_{} saved!", glpyh); }
+                                Err(e) => {
+                                    println!("make_glpyh_{}.png not saved buf error - {}", glpyh, e);
+                                }
+                            }
+                        }
+                        None => {
+                            println!("buffer error in saving make_glpyh_{}.png", glpyh);
                         }
                     }
                 }
@@ -795,8 +802,6 @@ impl State {
             // don't present output
             let glpyh_dbg_buf = device.create_buffer(&glpyh_dgb_buf_desc);
 
-            let u32_size = std::mem::size_of::<u32>() as u32;
- 
             // save into buf from texture
             encoder.copy_texture_to_buffer(
                 wgpu::ImageCopyTexture {
@@ -809,7 +814,7 @@ impl State {
                     buffer: &glpyh_dbg_buf,
                     layout: wgpu::ImageDataLayout {
                         offset: 0,
-                        bytes_per_row: Some((u32_size * texture.width()).next_multiple_of(256)),
+                        bytes_per_row: Some((4 * texture.width()).next_multiple_of(256)),
                         rows_per_image: Some(texture.height()),
                     },
                 },
@@ -836,12 +841,13 @@ impl State {
                 rx.receive().await.unwrap().unwrap();
 
                 let data = buffer_slice.get_mapped_range();
-                let slice = &data.as_slice()[0..(texture.height() * texture.width()) as usize]; 
+                let slice = data.as_slice();
  
                 // save the glpyh to .png
                 use image::{ImageBuffer, Rgba};
                 let Some(buffer) =
-                   ImageBuffer::<Rgba<u8>, _>::from_raw((u32_size * texture.width()).next_multiple_of(256).div_ceil(4),
+                   ImageBuffer::<Rgba<u8>, _>::from_raw((4 * texture.width())
+                                                        .next_multiple_of(256).div_ceil(4),
                                                          texture.height(),
                                                          slice) else {
                        println!("no glpyh printed to debug - QUIET FAIL");
