@@ -433,7 +433,6 @@ impl State {
                 let Some((bbox, _)) = glpyh_loader.glpyh_map.get(glpyh) else 
                     {panic!("no lookup for glpyh")};
 
-                let width = (bbox.width * 4).next_multiple_of(256).div_ceil(4) as u32;
                 let tex_size = wgpu::Extent3d{
                             height: bbox.height as u32, 
                             width: bbox.width as u32, 
@@ -462,7 +461,6 @@ impl State {
                 let mut glpyh_encoder = device.create_command_encoder(
                     &CommandEncoderDescriptor { label: Some(&format!("glpyh enc {}", glpyh))});
 
-                use num::Integer;
                 // write from buffer
 
                 /*
@@ -485,12 +483,18 @@ impl State {
                     }, tex_size);
                 */
 
-                let glpyh_slice = 
-                    &data.as_slice()[0..(bbox.width * 4 * bbox.height) as usize];
+                let glpyh_slice = data
+                    .chunks((bbox.width * 4).next_multiple_of(256) as usize)
+                    .fold(Vec::new(), |mut init, acc| {
+                        init.extend_from_slice(&acc[0..(bbox.width *4) as usize]);
+                        return init;
+                }).to_owned();
+
+                // width padding code
 
                 queue.write_texture(
                     glpyh_tex.as_image_copy(), 
-                    glpyh_slice, 
+                    glpyh_slice.as_slice(), 
                     ImageDataLayout { 
                         offset: 0,
                         bytes_per_row: Some((bbox.width * 4) as u32),
@@ -502,10 +506,10 @@ impl State {
                 {
                     use image::{Rgba, ColorType};
                     match image::ImageBuffer::<Rgba<u8>,_>::from_raw(
-                       width as u32, bbox.height as u32, glpyh_slice){
+                       bbox.width as u32, bbox.height as u32, glpyh_slice){
                         Some(im) => { 
                            match im.save(format!("make_glpyh_{}.png", glpyh)) {
-                                Ok(()) => { println!("make_glpyh_{} saved!", glpyh); }
+                                Ok(()) => { println!("make_glpyh_{}.png saved!", glpyh); }
                                 Err(e) => {
                                     println!("make_glpyh_{}.png not saved buf error - {}", glpyh, e);
                                 }
@@ -841,15 +845,14 @@ impl State {
                 rx.receive().await.unwrap().unwrap();
 
                 let data = buffer_slice.get_mapped_range();
-                let slice = data.as_slice();
+                
  
                 // save the glpyh to .png
                 use image::{ImageBuffer, Rgba};
                 let Some(buffer) =
-                   ImageBuffer::<Rgba<u8>, _>::from_raw((4 * texture.width())
-                                                        .next_multiple_of(256).div_ceil(4),
+                   ImageBuffer::<Rgba<u8>, _>::from_raw(texture.width(),
                                                          texture.height(),
-                                                         slice) else {
+                        &data[0..(texture.width() * 4 * texture.height()) as usize]) else {
                        println!("no glpyh printed to debug - QUIET FAIL");
                        return;
                    };
