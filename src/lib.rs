@@ -194,7 +194,7 @@ impl State {
         // controls indicies for debug code and render
         let glpyh_indicies: [u16;6] = [
             0, 1, 2,
-            0, 2, 3
+            0, 2, 3,
         ];
 
         // create buffer for position
@@ -383,8 +383,7 @@ impl State {
 
 
 
-       pub async fn make_glpyhs(device: &mut wgpu::Device, 
-                                queue: &mut wgpu::Queue, // font_atlas: &FontAtlas, 
+       pub async fn make_glpyhs(device: &mut wgpu::Device, queue: &mut wgpu::Queue, // font_atlas: &FontAtlas, 
                                 glpyh_loader: &GlpyhLoader,
                                 glpyh_sampler: wgpu::Sampler, glpyh_layout: wgpu::BindGroupLayout) -> 
         HashMap<char, wgpu::BindGroup> {
@@ -483,18 +482,13 @@ impl State {
                     }, tex_size);
                 */
 
-                let glpyh_slice = data
-                    .chunks((bbox.width * 4).next_multiple_of(256) as usize)
-                    .fold(Vec::new(), |mut init, acc| {
-                        init.extend_from_slice(&acc[0..(bbox.width *4) as usize]);
-                        return init;
-                }).to_owned();
-
-                // width padding code
+                // remove padding from buffer
+                let glpyh_slice = GlpyhLoader::depadder(data.to_vec(),
+                    bbox.width);
 
                 queue.write_texture(
                     glpyh_tex.as_image_copy(), 
-                    glpyh_slice.as_slice(), 
+                    glpyh_slice.as_slice(),
                     ImageDataLayout { 
                         offset: 0,
                         bytes_per_row: Some((bbox.width * 4) as u32),
@@ -506,7 +500,7 @@ impl State {
                 {
                     use image::{Rgba, ColorType};
                     match image::ImageBuffer::<Rgba<u8>,_>::from_raw(
-                       bbox.width as u32, bbox.height as u32, glpyh_slice){
+                       bbox.width as u32, bbox.height as u32, glpyh_slice.as_slice()){
                         Some(im) => { 
                            match im.save(format!("make_glpyh_{}.png", glpyh)) {
                                 Ok(()) => { println!("make_glpyh_{}.png saved!", glpyh); }
@@ -618,16 +612,16 @@ impl State {
 
                 // create coords:
                 // start pos , bbox width + pos, bbox height + height
-                let glpyh_vert: &[Vertex] = &[
-                    Vertex { position: [start.0 , start.1, 0.0],
-                    tex_coords: [0.0, 0.0], }, // b lh corner
+                let glpyh_vert: &[Vertex] = &[ 
                     Vertex { position: [start.0 + bbox_normalized.0, start.1
-                        , 0.0], tex_coords: [1.0, 0.0], }, // t lh coner
+                        , 0.0], tex_coords: [1.0, 0.0], }, // t lh corner
+                    Vertex { position: [start.0 , start.1, 0.0],
+                    tex_coords: [0.0, 0.0]}, // b lh corner
                     Vertex { position: [start.0, start.1 + bbox_normalized.1
                         ,0.0], tex_coords: [0.0, 1.0], }, // b rh corner
                     Vertex { position: [(start.0 + bbox_normalized.0),
-                    (start.1 + bbox_normalized.1) ,0.0], tex_coords: [1.0,1.0], },
-                    // t rh corner
+                    (start.1 + bbox_normalized.1) ,0.0], 
+                        tex_coords: [1.0,1.0]}, // t rh corner
                 ];
 
                 /*
@@ -716,13 +710,13 @@ impl State {
                          */
                    
             let glpyh_vert: &[Vertex] = &[
-                Vertex { position: [0.0, 0.0, 0.0],
+                Vertex { position: [0.0, 1.0
+                    ,0.0], tex_coords: [0.0, 1.0]}, // t lh corner
+                 Vertex { position: [0.0, 0.0, 0.0],
                 tex_coords: [0.0, 0.0], }, // b lh corner
                 Vertex { position: [1.0, 0.0 
-                    , 0.0], tex_coords: [1.0, 0.0], }, // t lh coner
-                Vertex { position: [0.0, 1.0
-                    ,0.0], tex_coords: [0.0, 1.0], }, // b rh corner
-                Vertex { position: [1.0, 1.0, 0.0], 
+                    , 0.0], tex_coords: [1.0, 0.0], }, // b rh corner
+               Vertex { position: [1.0, 1.0, 0.0], 
                     tex_coords: [1.0,1.0], 
                 },  // t rh corner
             ];
@@ -845,14 +839,16 @@ impl State {
                 rx.receive().await.unwrap().unwrap();
 
                 let data = buffer_slice.get_mapped_range();
+
+                let glpyh_slice = GlpyhLoader::depadder(data.to_vec(),
+                    bbox.width);
                 
- 
                 // save the glpyh to .png
                 use image::{ImageBuffer, Rgba};
                 let Some(buffer) =
                    ImageBuffer::<Rgba<u8>, _>::from_raw(texture.width(),
                                                          texture.height(),
-                        &data[0..(texture.width() * 4 * texture.height()) as usize]) else {
+                        glpyh_slice) else { 
                        println!("no glpyh printed to debug - QUIET FAIL");
                        return;
                    };
@@ -902,7 +898,7 @@ impl State {
                                         b: 0.0,
                                         a: 0.0,
                                     }),
-                                    store: false,
+                                    store: true,
                                 },
                             })],
                             depth_stencil_attachment: None,

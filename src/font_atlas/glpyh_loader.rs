@@ -90,6 +90,20 @@ impl GlpyhLoader {
 
     }
 
+	/*
+		depads the padding set to the buffer for compatibility
+		in wgpu
+	*/
+	pub fn depadder(data: Vec<u8>, width : u64) -> Vec<u8>{
+		// width de-padding code
+		return data
+			.chunks((width * 4).next_multiple_of(256) as usize)
+			.fold(Vec::new(), |mut init, acc| {
+				init.extend_from_slice(&acc[0..(width *4) as usize]);
+				return init;
+		}).to_owned();
+	}
+
     pub async fn get_glpyh_data(&self, glpyh: char, 
                                 device : &mut wgpu::Device, 
                                 queue: &mut wgpu::Queue) -> Option<wgpu::Buffer> {
@@ -104,15 +118,18 @@ impl GlpyhLoader {
 
             // calculate the offset for each row,
             // so bytes wrap round to the next row of the image
-            let offset = (bbox.width * 4).next_multiple_of(256) - (bbox.width * 4);
+            let offset = (bbox.width * 4).next_multiple_of(256) - 
+                (bbox.width * 4);
             let padded = 
                 GlpyhLoader::padder(offset, bbox.width * 4, data.to_owned());
            
             
             #[cfg(debug_assertions)]
             {
-                match image::save_buffer(&format!("get_glpyh_{}.png", glpyh), data.as_slice(), 
-                                   bbox.width as u32, bbox.height as u32, image::ColorType::Rgba8) {
+                match image::save_buffer(&format!("get_glpyh_{}.png", glpyh),
+                data.as_slice(), 
+                    bbox.width as u32, bbox.height as u32,
+                    image::ColorType::Rgba8) {
                     Ok(()) => {}
                     Err(e) => {
                         println!("glpyh {} error {}", glpyh, e);
