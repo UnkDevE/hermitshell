@@ -614,14 +614,14 @@ impl State {
                 // start pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[ 
                     Vertex { position: [start.0 + bbox_normalized.0, start.1
-                        , 0.0], tex_coords: [1.0, 0.0], }, // t lh corner
-                    Vertex { position: [start.0 , start.1, 0.0],
-                    tex_coords: [0.0, 0.0]}, // b lh corner
-                    Vertex { position: [start.0, start.1 + bbox_normalized.1
-                        ,0.0], tex_coords: [0.0, 1.0], }, // b rh corner
+                        , 0.0], tex_coords: [1.0, 0.0], }, // b lh corner
+                   Vertex { position: [start.0, start.1 + bbox_normalized.1
+                        ,0.0], tex_coords: [0.0, 1.0], }, // t rh corner
                     Vertex { position: [(start.0 + bbox_normalized.0),
                     (start.1 + bbox_normalized.1) ,0.0], 
-                        tex_coords: [1.0,1.0]}, // t rh corner
+                        tex_coords: [1.0,1.0]}, // b rh corner
+                      Vertex { position: [start.0 , start.1, 0.0],
+                    tex_coords: [0.0, 0.0]}, // t lh corner
                 ];
 
                 /*
@@ -711,14 +711,14 @@ impl State {
                    
             let glpyh_vert: &[Vertex] = &[
                 Vertex { position: [0.0, 1.0
-                    ,0.0], tex_coords: [0.0, 1.0]}, // t lh corner
-                 Vertex { position: [0.0, 0.0, 0.0],
-                tex_coords: [0.0, 0.0], }, // b lh corner
+                    ,0.0], tex_coords: [0.0, 1.0]}, // b lh corner
                 Vertex { position: [1.0, 0.0 
-                    , 0.0], tex_coords: [1.0, 0.0], }, // b rh corner
-               Vertex { position: [1.0, 1.0, 0.0], 
+                    , 0.0], tex_coords: [1.0, 0.0], }, // t rh corner
+                Vertex { position: [1.0, 1.0, 0.0], 
                     tex_coords: [1.0,1.0], 
-                },  // t rh corner
+                },  // b rh corner
+                Vertex { position: [0.0, 0.0, 0.0],
+                    tex_coords: [0.0, 0.0], }, // t lh corner
             ];
 
             // create buffer for position
@@ -730,9 +730,10 @@ impl State {
             });    
 
             let label = format!("dgb desc glpyh {}", glpyh);
+            let tex_width = (bbox.width * 4).next_multiple_of(256).div_ceil(4);
             let texture_desc = wgpu::TextureDescriptor {
                 size: wgpu::Extent3d {
-                    width: bbox.width as u32,
+                    width: tex_width as u32,
                     height: bbox.height as u32,
                     depth_or_array_layers: 1,
                 },
@@ -793,7 +794,7 @@ impl State {
                 render_pass.set_vertex_buffer(0, glpyh_positions.slice(..));
                 render_pass.set_index_buffer(glpyh_indicies_buf.slice(..), wgpu::IndexFormat::Uint16);
                 println!("rendering glpyh {} for dgb", glpyh);
-                render_pass.draw_indexed(0..4, 0, 0..1);
+                render_pass.draw_indexed(0..4, 3, 0..1);
                 println!("glpyh drawn"); 
             }
  
@@ -838,16 +839,36 @@ impl State {
                 device.poll(wgpu::Maintain::Wait);
                 rx.receive().await.unwrap().unwrap();
 
-                let data = buffer_slice.get_mapped_range();
+                let data = buffer_slice.get_mapped_range().to_vec();
 
-                let glpyh_slice = GlpyhLoader::depadder(data.to_vec(),
+                 let Some(buffer) =
+                   ImageBuffer::<Rgba<u8>, _>::from_raw(tex_width as u32, 
+                                                        bbox.height as u32,
+                        data.clone()) else { 
+                       println!("no glpyh printed to debug - QUIET FAIL");
+                       return;
+                   };
+
+                let result = buffer.save(format!("glpyh_uncut_{}.png", glpyh.to_string()));
+                if let Err(e) = result {
+                    println!("uncut glpyh formatting error, glpyh: {}, error: {}",
+                                glpyh, e);
+                }
+                else if let Ok(()) = result {
+                    println!("rendered and saved as glpyh_uncut_{}.png", glpyh); 
+                }
+                else {
+                    println!("Unknown image formatting error");
+                }
+
+                let glpyh_slice = GlpyhLoader::depadder(data,
                     bbox.width);
                 
                 // save the glpyh to .png
                 use image::{ImageBuffer, Rgba};
                 let Some(buffer) =
-                   ImageBuffer::<Rgba<u8>, _>::from_raw(texture.width(),
-                                                         texture.height(),
+                   ImageBuffer::<Rgba<u8>, _>::from_raw(bbox.width as u32, 
+                                                        bbox.height as u32,
                         glpyh_slice) else { 
                        println!("no glpyh printed to debug - QUIET FAIL");
                        return;
@@ -922,7 +943,7 @@ impl State {
                                         render_pass.set_vertex_buffer(0, 
                                                                       positions.slice(..));
                                         render_pass.set_index_buffer(self.glpyh_indicies_buf.slice(..), wgpu::IndexFormat::Uint16);
-                                        render_pass.draw_indexed(0..4, 1, 0..1);
+                                        render_pass.draw_indexed(0..4, 0, 0..1);
                                         #[cfg(debug_assertions)]
                                         println!("pixels rendered for glpyh {}", &chr);
                                 }
