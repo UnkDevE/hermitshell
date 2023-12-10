@@ -39,7 +39,6 @@ impl GlpyhLoader {
                 face.rasterize_indexed_subpixel(id.into(), font_size);
                         // use px 
 
-
             // convert rgb to bgr 
             let mut bgr: Vec<u8> = Vec::new();
             for channel in glyph.chunks(3) {

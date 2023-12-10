@@ -193,8 +193,8 @@ impl State {
      
         // controls indicies for debug code and render
         let glpyh_indicies: [u16;6] = [
-            0, 1, 2,
-            0, 2, 3,
+            0, 2, 1,
+            0, 1, 3,
         ];
 
         // create buffer for position
@@ -209,7 +209,7 @@ impl State {
         return Self {
                 surface,
                 device,
-                queue,
+                 queue,
                 config,
                 size: window.inner_size(),
                 render_pipeline,
@@ -714,11 +714,11 @@ impl State {
                     ,0.0], tex_coords: [0.0, 1.0]}, // b lh corner
                 Vertex { position: [1.0, 0.0 
                     , 0.0], tex_coords: [1.0, 0.0], }, // t rh corner
+                 Vertex { position: [0.0, 0.0, 0.0],
+                    tex_coords: [0.0, 0.0], }, // t lh corner
                 Vertex { position: [1.0, 1.0, 0.0], 
                     tex_coords: [1.0,1.0], 
                 },  // b rh corner
-                Vertex { position: [0.0, 0.0, 0.0],
-                    tex_coords: [0.0, 0.0], }, // t lh corner
             ];
 
             // create buffer for position
@@ -744,7 +744,7 @@ impl State {
                 usage: wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 label: Some(&label),
-                view_formats: &[]
+                view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb]
             };
 
             let texture = device.create_texture(&texture_desc);
@@ -758,9 +758,9 @@ impl State {
                 usage: wgpu::BufferUsages::MAP_READ
                     | wgpu::BufferUsages::COPY_DST,
                 label: Some(&label),
-                mapped_at_creation: false,
+                mapped_at_creation: false, 
             };
-    
+   
             let mut encoder = device.create_command_encoder(
                 &wgpu::CommandEncoderDescriptor {
                     label: Some("Render Debug Encoder"),
@@ -794,7 +794,7 @@ impl State {
                 render_pass.set_vertex_buffer(0, glpyh_positions.slice(..));
                 render_pass.set_index_buffer(glpyh_indicies_buf.slice(..), wgpu::IndexFormat::Uint16);
                 println!("rendering glpyh {} for dgb", glpyh);
-                render_pass.draw_indexed(0..4, 3, 0..1);
+                render_pass.draw_indexed(0..6, 0, 0..1);
                 println!("glpyh drawn"); 
             }
  
@@ -807,7 +807,7 @@ impl State {
                     aspect: wgpu::TextureAspect::All,
                     texture: &texture,
                     mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
+                    origin: wgpu::Origin3d::ZERO
                 },
                 wgpu::ImageCopyBuffer {
                     buffer: &glpyh_dbg_buf,
@@ -816,11 +816,9 @@ impl State {
                         bytes_per_row: Some((4 * texture.width()).next_multiple_of(256)),
                         rows_per_image: Some(texture.height()),
                     },
-                },
-                texture_desc.size);
+                }, texture.size());
 
-
-           // submit render + copy, no poll
+            // submit render + copy and no poll
             queue.submit(Some(encoder.finish()));
 
             #[cfg(debug_assertions)]
@@ -828,6 +826,7 @@ impl State {
 
             // pull out the image from buffer
             {
+                
                 let buffer_slice = glpyh_dbg_buf.slice(..);
                 
                 // NOTE: We have to create the mapping THEN device.poll() before await
@@ -839,9 +838,10 @@ impl State {
                 device.poll(wgpu::Maintain::Wait);
                 rx.receive().await.unwrap().unwrap();
 
-                let data = buffer_slice.get_mapped_range().to_vec();
+                let mut data = buffer_slice.get_mapped_range().to_vec();
 
-                 let Some(buffer) =
+                use image::{Rgba, ImageBuffer};
+                let Some(buffer) =
                    ImageBuffer::<Rgba<u8>, _>::from_raw(tex_width as u32, 
                                                         bbox.height as u32,
                         data.clone()) else { 
@@ -861,29 +861,34 @@ impl State {
                     println!("Unknown image formatting error");
                 }
 
-                let glpyh_slice = GlpyhLoader::depadder(data,
-                    bbox.width);
+                // we want the end of our image so we reverse and modify 
+                // base off depadder function one time use so inline
+                {
+                    let glpyh_slice = data[((tex_width - bbox.width) as usize *4)
+                                ..((tex_width * 4) as usize)].as_slice();
                 
-                // save the glpyh to .png
-                use image::{ImageBuffer, Rgba};
-                let Some(buffer) =
-                   ImageBuffer::<Rgba<u8>, _>::from_raw(bbox.width as u32, 
-                                                        bbox.height as u32,
-                        glpyh_slice) else { 
-                       println!("no glpyh printed to debug - QUIET FAIL");
-                       return;
-                   };
+                
+                    // save the glpyh to .png
+                    use image::{ImageBuffer, Rgba};
+                    let Some(buffer) =
+                       ImageBuffer::<Rgba<u8>, _>::from_raw(bbox.width as u32, 
+                                                            bbox.height as u32,
+                            glpyh_slice) else { 
+                           println!("no glpyh printed to debug - QUIET FAIL");
+                           return;
+                       };
 
-                let result = buffer.save(format!("glpyh_{}.png", glpyh.to_string()));
-                if let Err(e) = result {
-                    println!("glpyh formatting error, glpyh: {}, error: {}",
-                                glpyh, e);
-                }
-                else if let Ok(()) = result {
-                    println!("rendered and saved as glpyh_{}.png", glpyh); 
-                }
-                else {
-                    println!("Unknown image formatting error");
+                    let result = buffer.save(format!("glpyh_{}.png", glpyh.to_string()));
+                    if let Err(e) = result {
+                        println!("glpyh formatting error, glpyh: {}, error: {}",
+                                    glpyh, e);
+                    }
+                    else if let Ok(()) = result {
+                        println!("rendered and saved as glpyh_{}.png", glpyh); 
+                    }
+                    else {
+                        println!("Unknown image formatting error");
+                    }
                 }
             }
             // unmap the output buffer
@@ -919,7 +924,7 @@ impl State {
                                         b: 0.0,
                                         a: 0.0,
                                     }),
-                                    store: true,
+                                    store: false,
                                 },
                             })],
                             depth_stencil_attachment: None,
@@ -943,7 +948,7 @@ impl State {
                                         render_pass.set_vertex_buffer(0, 
                                                                       positions.slice(..));
                                         render_pass.set_index_buffer(self.glpyh_indicies_buf.slice(..), wgpu::IndexFormat::Uint16);
-                                        render_pass.draw_indexed(0..4, 0, 0..1);
+                                        render_pass.draw_indexed(0..6, 0, 0..1);
                                         #[cfg(debug_assertions)]
                                         println!("pixels rendered for glpyh {}", &chr);
                                 }
