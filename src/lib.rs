@@ -193,9 +193,10 @@ impl State {
      
         // controls indicies for debug code and render
         let glpyh_indicies: [u16;6] = [
-            0, 2, 1,
-            0, 1, 3,
+             0, 2, 3,
+             3, 1, 0
         ];
+
 
         // create buffer for position
         let glpyh_indicies_buf = device.create_buffer_init(
@@ -613,16 +614,16 @@ impl State {
                 // create coords:
                 // start pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[ 
+                    Vertex { position: [start.0 , start.1, 0.0],
+                            tex_coords: [0.0, 0.0]}, // t lh corner
                     Vertex { position: [start.0 + bbox_normalized.0, start.1
                         , 0.0], tex_coords: [1.0, 0.0], }, // b lh corner
-                   Vertex { position: [start.0, start.1 + bbox_normalized.1
-                        ,0.0], tex_coords: [0.0, 1.0], }, // t rh corner
                     Vertex { position: [(start.0 + bbox_normalized.0),
                     (start.1 + bbox_normalized.1) ,0.0], 
                         tex_coords: [1.0,1.0]}, // b rh corner
-                      Vertex { position: [start.0 , start.1, 0.0],
-                    tex_coords: [0.0, 0.0]}, // t lh corner
-                ];
+                   Vertex { position: [start.0, start.1 + bbox_normalized.1
+                        ,0.0], tex_coords: [0.0, 1.0], }, // t rh corner
+              ];
 
                 /*
                 // debug code to check if glpyhs are in textures
@@ -710,16 +711,15 @@ impl State {
                          */
                    
             let glpyh_vert: &[Vertex] = &[
+                Vertex { position: [0.0, 0.0, 0.0],
+                    tex_coords: [0.0, 0.0], }, // t lh corner
                 Vertex { position: [0.0, 1.0
                     ,0.0], tex_coords: [0.0, 1.0]}, // b lh corner
-                Vertex { position: [1.0, 0.0 
+               Vertex { position: [1.0, 0.0 
                     , 0.0], tex_coords: [1.0, 0.0], }, // t rh corner
-                 Vertex { position: [0.0, 0.0, 0.0],
-                    tex_coords: [0.0, 0.0], }, // t lh corner
-                Vertex { position: [1.0, 1.0, 0.0], 
-                    tex_coords: [1.0,1.0], 
-                },  // b rh corner
-            ];
+               Vertex { position: [1.0, 1.0, 0.0], 
+                    tex_coords: [1.0,1.0],},  // b rh corner
+          ];
 
             // create buffer for position
             let glpyh_positions = device.create_buffer_init(
@@ -843,10 +843,11 @@ impl State {
                 use image::{Rgba, ImageBuffer};
                 let Some(buffer) =
                    ImageBuffer::<Rgba<u8>, _>::from_raw(tex_width as u32, 
-                                                        bbox.height as u32,
+                                                        texture.height() as u32,
                         data.clone()) else { 
                        println!("no glpyh printed to debug - QUIET FAIL");
-                       return;
+                       glpyh_dbg_buf.unmap();
+                       continue;
                    };
 
                 let result = buffer.save(format!("glpyh_uncut_{}.png", glpyh.to_string()));
@@ -862,11 +863,21 @@ impl State {
                 }
 
                 // we want the end of our image so we reverse and modify 
-                // base off depadder function one time use so inline
                 {
-                    let glpyh_slice = data[((tex_width - bbox.width) as usize *4)
-                                ..((tex_width * 4) as usize)].as_slice();
-                
+                    // reverse to get end of image
+                    data.reverse();
+                    // remove padding
+                    let rev_data = 
+                        GlpyhLoader::depadder(data, bbox.width);
+                    
+                    // resort the y axis
+                    let glpyh_slice: Vec<u8> = 
+                        rev_data.chunks((bbox.width * 4) as usize).rev()
+                        .fold(Vec::new(), |mut init, acc| {
+                            init.extend_from_slice(acc);
+                            return init;
+                        });
+           
                 
                     // save the glpyh to .png
                     use image::{ImageBuffer, Rgba};
@@ -875,7 +886,8 @@ impl State {
                                                             bbox.height as u32,
                             glpyh_slice) else { 
                            println!("no glpyh printed to debug - QUIET FAIL");
-                           return;
+                           glpyh_dbg_buf.unmap();
+                           continue;
                        };
 
                     let result = buffer.save(format!("glpyh_{}.png", glpyh.to_string()));
