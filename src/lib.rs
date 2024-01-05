@@ -193,8 +193,8 @@ impl State {
      
         // controls indicies for debug code and render
         let glpyh_indicies: [u16;6] = [
-             0, 2, 3,
-             3, 1, 0
+             0, 3, 2,
+             1, 3, 0
         ];
 
 
@@ -614,14 +614,14 @@ impl State {
                 // create coords:
                 // start pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[ 
-                    Vertex { position: [start.0 , start.1, 0.0],
+                    Vertex { position: [start.0 , 1.0 - start.1, 0.0],
                             tex_coords: [0.0, 0.0]}, // t lh corner
-                    Vertex { position: [start.0 + bbox_normalized.0, start.1
+                    Vertex { position: [start.0 + bbox_normalized.0,  1.0 - start.1
                         , 0.0], tex_coords: [1.0, 0.0], }, // b lh corner
                     Vertex { position: [(start.0 + bbox_normalized.0),
-                    (start.1 + bbox_normalized.1) ,0.0], 
+                    1.0 - (start.1 + bbox_normalized.1) ,0.0], 
                         tex_coords: [1.0,1.0]}, // b rh corner
-                   Vertex { position: [start.0, start.1 + bbox_normalized.1
+                   Vertex { position: [start.0, 1.0 - (start.1 + bbox_normalized.1)
                         ,0.0], tex_coords: [0.0, 1.0], }, // t rh corner
               ];
 
@@ -711,13 +711,13 @@ impl State {
                          */
                    
             let glpyh_vert: &[Vertex] = &[
-                Vertex { position: [0.0, 0.0, 0.0],
+                Vertex { position: [0.0, 1.0 - 0.0, 0.0],
                     tex_coords: [0.0, 0.0], }, // t lh corner
-                Vertex { position: [0.0, 1.0
+                Vertex { position: [0.0, 1.0 - 1.0
                     ,0.0], tex_coords: [0.0, 1.0]}, // b lh corner
-               Vertex { position: [1.0, 0.0 
+               Vertex { position: [1.0, 1.0 - 0.0 
                     , 0.0], tex_coords: [1.0, 0.0], }, // t rh corner
-               Vertex { position: [1.0, 1.0, 0.0], 
+               Vertex { position: [1.0, 1.0 - 1.0, 0.0], 
                     tex_coords: [1.0,1.0],},  // b rh corner
           ];
 
