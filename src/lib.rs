@@ -601,7 +601,34 @@ impl State {
                 let bbox_normalized = 
                     ((bbox.width as f64 / self.config.width as f64) as f32,
                      (bbox.height as f64 / self.config.height as f64) as f32);
-                // add poisition for next char
+
+                /*
+                 * this mirrors debug coords
+                let glpyh_vert: &[Vertex] = &[
+                    Vertex { position: [0.0, 1.0, 0.0],
+                        tex_coords: [0.0, 0.0], }, // t lh corner
+                    Vertex { position: [0.0, 0.0
+                        ,0.0], tex_coords: [0.0, 1.0]}, // b lh corner
+                   Vertex { position: [1.0, 1.0 
+                        , 0.0], tex_coords: [1.0, 0.0], }, // t rh corner
+                   Vertex { position: [1.0, 0.0, 0.0], 
+                        tex_coords: [1.0,1.0],},  // b rh corner
+                  ];
+              */
+                // create coords:
+                // start pos , bbox width + pos, bbox height + height
+                let glpyh_vert: &[Vertex] = &[ 
+                    Vertex { position: [start.0 , start.1 + bbox_normalized.1, 0.0],
+                            tex_coords: [0.0, 0.0]}, // t lh corner
+                    Vertex { position: [start.0 , start.1
+                        , 0.0], tex_coords: [0.0, 1.0], }, // b lh corner
+                    Vertex { position: [(start.0 + bbox_normalized.0),
+                        start.1 + bbox_normalized.1, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
+                   Vertex { position: [start.0 + bbox_normalized.0, start.1 
+                        ,0.0], tex_coords: [1.0, 1.0], }, // b rh corner
+                  ];
+
+                // add position for next char
                 start.0 += bbox_normalized.0; // set as width
                 // if start smaller than bbox then set as bbox 
                 if start.1 < bbox_normalized.1 { start.1 = bbox_normalized.1}
@@ -611,38 +638,8 @@ impl State {
                         bbox_normalized.0, bbox_normalized.1);
                 }
 
-                // create coords:
-                // start pos , bbox width + pos, bbox height + height
-                let glpyh_vert: &[Vertex] = &[ 
-                    Vertex { position: [start.0 , 1.0 - start.1, 0.0],
-                            tex_coords: [0.0, 0.0]}, // t lh corner
-                    Vertex { position: [start.0 + bbox_normalized.0,  1.0 - start.1
-                        , 0.0], tex_coords: [1.0, 0.0], }, // b lh corner
-                    Vertex { position: [(start.0 + bbox_normalized.0),
-                    1.0 - (start.1 + bbox_normalized.1) ,0.0], 
-                        tex_coords: [1.0,1.0]}, // b rh corner
-                   Vertex { position: [start.0, 1.0 - (start.1 + bbox_normalized.1)
-                        ,0.0], tex_coords: [0.0, 1.0], }, // t rh corner
-              ];
 
-                /*
-                // debug code to check if glpyhs are in textures
-                /
-                let glpyh_vert: &[Vertex] = &[
-                    Vertex { position: [0.0, 0.0, 0.0],
-                    tex_coords: [0.0, 0.0], }, // b lh corner
-                    Vertex { position: [0.0, 1.0 
-                        , 0.0], tex_coords: [0.0, 1.0], }, // t lh coner
-                    Vertex { position: [1.0, 0.0
-                        ,0.0], tex_coords: [1.0, 0.0], }, // b rh corner
-                    Vertex { position: [1.0, 1.0, 0.0], 
-                        tex_coords: [1.0,1.0], 
-                    },  // t rh corner
-                ];
-                BUG: they aren't! in textures
-                */
-
-                // create buffer for position
+               // create buffer for position
                 let glpyh_buf = self.device.create_buffer_init(
                     &wgpu::util::BufferInitDescriptor { 
                         label: Some(&format!("buffer {}", cbuf_char)),
@@ -711,13 +708,13 @@ impl State {
                          */
                    
             let glpyh_vert: &[Vertex] = &[
-                Vertex { position: [0.0, 1.0 - 0.0, 0.0],
+                Vertex { position: [0.0, 1.0, 0.0],
                     tex_coords: [0.0, 0.0], }, // t lh corner
-                Vertex { position: [0.0, 1.0 - 1.0
+                Vertex { position: [0.0, 0.0
                     ,0.0], tex_coords: [0.0, 1.0]}, // b lh corner
-               Vertex { position: [1.0, 1.0 - 0.0 
+               Vertex { position: [1.0, 1.0 
                     , 0.0], tex_coords: [1.0, 0.0], }, // t rh corner
-               Vertex { position: [1.0, 1.0 - 1.0, 0.0], 
+               Vertex { position: [1.0, 0.0, 0.0], 
                     tex_coords: [1.0,1.0],},  // b rh corner
           ];
 
@@ -950,7 +947,7 @@ impl State {
                         for (i, chr) in self.shell_buf.string_buf.chars().enumerate() {
                             
                              #[cfg(debug_assertions)]
-                             println!("chr {} printed to shell", chr);
+                             // println!("chr {} printed to shell", chr);
 
                             if chr != ' ' {
                                 if let Some(glpyh) = self.glpyhs.get(&chr) {
