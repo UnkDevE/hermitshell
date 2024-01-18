@@ -73,6 +73,7 @@ pub async fn run(){
     // make buffers
     let mut command_str = read_from_pty(&mut reader);
     let mut scratch_buf:String = String::from("");
+    state.update();
 
     // if <ESC> close window
     event_loop.run(move |event, _, control_flow| match event {
