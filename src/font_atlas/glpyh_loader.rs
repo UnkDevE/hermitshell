@@ -109,7 +109,7 @@ impl GlpyhLoader {
         if let Some((bbox, data)) = self.glpyh_map.get(&glpyh) {
             
             use wgpu::CommandEncoderDescriptor;
-            let mut encoder = device.create_command_encoder(
+            let encoder = device.create_command_encoder(
                 &CommandEncoderDescriptor { label: Some("glpyh_loader_enc") });
 
             let size = 

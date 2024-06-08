@@ -6,23 +6,21 @@
 #![feature(iter_intersperse)]
 #![feature(slice_pattern)] 
 pub mod font_atlas;
-use bytemuck::bytes_of;
-use font_atlas::font_atlas::FontAtlas;
 use font_atlas::font_atlas::TermConfig;
 use font_atlas::glpyh_loader::GlpyhLoader;
 
-use num::integer::Roots;
 use wgpu::ImageDataLayout;
 use wgpu::TextureFormat;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
-use wgpu_types::ImageCopyTexture;
+use winit::application::ApplicationHandler;
 use winit::{
     event::*,
     window::Window
 };
 
 use core::slice::SlicePattern;
+use std::default;
 use std::iter;
 
 #[repr(C)] #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -54,8 +52,7 @@ impl Vertex {
 }
 
  
-pub struct State {
-    surface: wgpu::Surface,
+pub struct State<'window>{
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -68,6 +65,8 @@ pub struct State {
     glpyh_indicies: [u16;6],
     glpyh_indicies_buf: wgpu::Buffer,
     glpyh_loader : GlpyhLoader,
+    // must be delcared last
+    surface: wgpu::Surface<'window>,
 }
 
 pub struct ShellBuf {
@@ -93,8 +92,8 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
     return (seen, s); 
 } 
 
-impl State {
-    pub async fn new(window: &Window, term_config : TermConfig) -> Self {
+impl<'window> State<'window> {
+    pub async fn new(window: &'window Window, term_config : TermConfig) -> Self {
 
         let (surface, mut device, mut queue, config) = 
             Self::surface_config(window).await;
@@ -207,7 +206,7 @@ impl State {
         });
 
         // pack into struct
-        return Self {
+        return Self{
                 surface,
                 device,
                  queue,
@@ -223,7 +222,7 @@ impl State {
                 glpyh_indicies,
                 glpyh_indicies_buf,
                 glpyh_loader
-           };
+           }
     }
             
     pub fn make_render_pipeline(device: &mut wgpu::Device, 
@@ -282,11 +281,13 @@ impl State {
                 label: Some("Render Pipeline"),
                 layout: Some(&render_pipeline_layout),
                 vertex: wgpu::VertexState {
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                     module: &shader,
                     entry_point: "vs_main",
                     buffers: &[Vertex::desc()],
                 },
             fragment: Some(wgpu::FragmentState {
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 module: &shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
@@ -326,16 +327,18 @@ impl State {
         return (render_pipeline, glpyh_sampler, glpyh_layout);
     }
 
-    pub async fn surface_config(window: &Window)
+    pub async fn surface_config(window: &'window Window)
         -> (wgpu::Surface, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            flags: wgpu::InstanceFlags::default(),
             backends: wgpu::Backends::all(),
             dx12_shader_compiler: Default::default(),
+            gles_minor_version: Default::default(),
         });
 
-        let surface = unsafe { instance.create_surface(&window) }.unwrap();
+        let surface = unsafe { instance.create_surface(window) }.unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -348,15 +351,9 @@ impl State {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
+                    required_features: Default::default(),
+                    required_limits: Default::default(),
                     label: Some("terminal adapter"),
-                    features: wgpu::Features::empty(),
-                    // WebGL doesn't support all of wgpu's features, so if
-                    // we're building for the web we'll have to disable some.
-                    limits: if cfg!(target_arch = "wasm32") {
-                        wgpu::Limits::downlevel_webgl2_defaults()
-                    } else {
-                        wgpu::Limits::default()
-                    },
                 },
                 None, // Some(&std::path::Path::new("trace")), // Trace path
                 #[cfg(not(debug_assertions))]
@@ -369,6 +366,7 @@ impl State {
         let capablities = surface.get_capabilities(&adapter);
 
         let config = wgpu::SurfaceConfiguration {
+            desired_maximum_frame_latency: Default::default(),
             alpha_mode: *capablities.alpha_modes.first().unwrap(),
             usage: 
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -458,7 +456,7 @@ impl State {
                     println!("bbox size ({}, {})", bbox.width, bbox.height);
                 }
 
-                let mut glpyh_encoder = device.create_command_encoder(
+                let glpyh_encoder = device.create_command_encoder(
                     &CommandEncoderDescriptor { label: Some(&format!("glpyh enc {}", glpyh))});
 
                 // write from buffer
@@ -499,7 +497,7 @@ impl State {
 
                 #[cfg(debug_assertions)]
                 {
-                    use image::{Rgba, ColorType};
+                    use image::{Rgba};
                     match image::ImageBuffer::<Rgba<u8>,_>::from_raw(
                        bbox.width as u32, bbox.height as u32, glpyh_slice.as_slice()){
                         Some(im) => { 
@@ -583,6 +581,8 @@ impl State {
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
         }
+
+        self.update()
     }
 
     #[allow(unused_variables)]
@@ -658,6 +658,8 @@ impl State {
     // BIG OVERHEAD, creates copy of renderpipline to debug glpyh usage
     pub async fn debug_glpyhs(&mut self) {
        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { 
+           flags: Default::default(),
+           gles_minor_version: Default::default(),
            backends: wgpu::Backends::all(),
            dx12_shader_compiler: Default::default(),
         });
@@ -766,6 +768,8 @@ impl State {
             // encap for secuirty
             {
                 let render_desc = wgpu::RenderPassDescriptor {
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
                         label: Some("debug Render Pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &texture_view,
@@ -777,7 +781,7 @@ impl State {
                                     r: 0.0,
                                     a: 1.0,
                                 }),
-                                store: true,
+                                store: wgpu::StoreOp::Store,
                             },
                         })],
                         depth_stencil_attachment: None,
@@ -922,6 +926,8 @@ impl State {
                 {
                     let mut render_pass = encoder.begin_render_pass(
                         &wgpu::RenderPassDescriptor {
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
                             label: Some("Render Pass"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: &view,
@@ -933,7 +939,7 @@ impl State {
                                         b: 0.0,
                                         a: 0.0,
                                     }),
-                                    store: false,
+                                    store: wgpu::StoreOp::Discard,
                                 },
                             })],
                             depth_stencil_attachment: None,
@@ -975,3 +981,36 @@ impl State {
 }
 
 
+impl ApplicationHandler for State {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Your application got resumed.
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+        // Handle window event.
+        state.update();
+        match state.render() {
+            Ok(_) => {}
+            // Reconfigure the surface if lost
+            Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+            // The system is out of memory, we should probably quit
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                *control_flow = ControlFlow::Exit;
+            }
+            // All other errors (Outdated, Timeout)
+            // should be resolved by the next frame
+            Err(e) => eprintln!("{:?}", e),
+        }
+ 
+    }
+
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
+        // Handle device event.
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+       self.window.request_redraw();
+        self.counter += 1;
+    }
+    
+}

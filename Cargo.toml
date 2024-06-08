@@ -6,33 +6,33 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 
-anyhow = "1.0.71"
-portable-pty = "0.7.0"
+anyhow = "1.0.86"
+portable-pty = "0.8.1"
 
 # gpu deps
-winit = {version = "0.27"}
-env_logger = "0.9"
+winit = {version = "0.30"}
+env_logger = "0.11"
 log = "0.4"
-pollster = "0.2.5"
-wgpu = "0.16.1"
-wgpu-types = "0.16.0"
+pollster = "0.3.0"
+wgpu = "0.20.0"
+wgpu-types = "0.20.0"
 
 # font deps
-fontdue = "0.7.2"
+fontdue = "0.9.1"
 
 # async deps
-bytemuck_derive = "1.4.0"
-futures-intrusive = "0.4.1"
-bytemuck = {version = "1.13.1", features = ["derive"]}
+bytemuck_derive = "1.7.0"
+futures-intrusive = "0.5.0"
+bytemuck = {version = "1.16.0", features = ["derive"]}
 # generic deps
-num = {version = "0.4.0"}
+num = {version = "0.4.3"}
 
 # test deps
 rand = "0.8.5"
 
 # wgpu internal feature for image loading
 [dependencies.image]
-version = "0.24"
+version = "0.25"
 default-features = false
 features = ["png", "jpeg"]
 

@@ -8,11 +8,10 @@ use hermitshell::font_atlas::font_atlas::TermConfig;
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};
 use winit::{
     event::*,
-    window::WindowBuilder,
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey,
 };
 
-use std::io::Read;
+use std::{io::Read, ptr};
 
 fn read_from_pty(reader: &mut Box<dyn Read + Send>) -> String {
     // make buffer the same as a max data of the terminal
@@ -45,8 +44,8 @@ pub async fn run(){
     // setup window
     let event_loop = EventLoop::new();
     use winit::dpi::LogicalSize;
-    let window = WindowBuilder::new().with_min_inner_size(
-        LogicalSize::new(640.0, 1080.0)).build(&event_loop).unwrap();
+    let window = event_loop.create_window(window::with_min_inner_size(
+        LogicalSize::new(640.0, 1080.0)).build(&event_loop)).unwrap();
     window.set_title("hermitshell");
 
     // spawn os-specific shell
@@ -67,12 +66,17 @@ pub async fn run(){
     
     // impl state
     let mut state = State::new(&window, TermConfig {font_dir, font_size: 64.0}).await;
-    println!("GLPYH DEBUG STARTED");
-    pollster::block_on(state.debug_glpyhs());
+    
+    // glpyh debug implicit(?) is called in state new
+    // println!("GLPYH DEBUG STARTED");
+    // pollster::block_on(state.debug_glpyhs());
 
     // make buffers
     let mut command_str = read_from_pty(&mut reader);
     let mut scratch_buf:String = String::from("");
+    // add carage return so that sh command starts up
+    write!(pty_pair.master, "\r\n").unwrap();
+
     state.update();
 
     // if <ESC> close window
@@ -83,14 +87,14 @@ pub async fn run(){
         } if window_id == window.id() => match event {
             WindowEvent::CloseRequested
             | WindowEvent::KeyboardInput {
-                input:
-                    KeyboardInput {
+                event:
+                    KeyEvent {
                         state: ElementState::Pressed,
-                        virtual_keycode: Some(VirtualKeyCode::Escape),
+                        physical_key: PhysicalKey::Code(Escape),
                         ..
                     },
                 ..
-            } => *control_flow = ControlFlow::Exit,
+            } => control_flow.exit(),
             WindowEvent::KeyboardInput {
                 input: KeyboardInput {
                     state:ElementState::Pressed,
@@ -111,7 +115,7 @@ pub async fn run(){
                     // set window to and run command
                     window.set_title(format!("hermitshell - {}", scratch_buf)
                                      .as_str());
-                    writeln!(pty_pair.master, "{}\r", scratch_buf).unwrap();
+                    writeln!(pty_pair.master, "{}\r\n", scratch_buf).unwrap();
 
                     // clear buffer for next cmd
                     scratch_buf.clear();
@@ -135,19 +139,7 @@ pub async fn run(){
             _ => {}
         },
         Event::RedrawRequested(win_id) if win_id == window.id() =>{
-            state.update();
-            match state.render() {
-                Ok(_) => {}
-                // Reconfigure the surface if lost
-                Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-                // The system is out of memory, we should probably quit
-                Err(wgpu::SurfaceError::OutOfMemory) => {
-                    *control_flow = ControlFlow::Exit;
-                }
-                // All other errors (Outdated, Timeout)
-                // should be resolved by the next frame
-                Err(e) => eprintln!("{:?}", e),
-            }
+
         }
         _ => {}
     });
