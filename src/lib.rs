@@ -981,27 +981,82 @@ impl<'window> State<'window> {
 }
 
 
-impl ApplicationHandler for State {
+impl<'window> ApplicationHandler for State<'window> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // Your application got resumed.
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
-        // Handle window event.
-        state.update();
-        match state.render() {
-            Ok(_) => {}
-            // Reconfigure the surface if lost
-            Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-            // The system is out of memory, we should probably quit
-            Err(wgpu::SurfaceError::OutOfMemory) => {
-                *control_flow = ControlFlow::Exit;
+        match event {
+            WindowEvent::CloseRequested
+            | WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(Escape),
+                        ..
+                    },
+                ..
+            } => control_flow.exit(),
+            WindowEvent::KeyboardInput {
+                event: KeyboardInput {
+                    state:ElementState::Pressed,
+                    physical_key: PhysicalKey::Code(Back), 
+                    ..},
+                ..} => {
+                    // pop used to remove last char not for output
+                    scratch_buf.pop().unwrap();
+                    state.shell_buf.string_buf.pop().unwrap();
+                    window.request_redraw();
+                }
+            WindowEvent::KeyboardInput {
+                event: KeyboardInput {
+                    state:ElementState::Released,
+                    physical_key: PhysicalKey::Code(Return),
+                    ..},
+                ..} => {
+                    // set window to and run command
+                    window.set_title(format!("hermitshell - {}", scratch_buf)
+                                     .as_str());
+                    writeln!(pty_pair.master, "{}\r\n", scratch_buf).unwrap();
+
+                    // clear buffer for next cmd
+                    scratch_buf.clear();
+                    // push output to buffer
+                    command_str.push_str(read_from_pty(&mut reader).as_str());
+                    state.shell_buf.string_buf.push_str(&command_str);
+
+                    #[cfg(debug_assertions)]
+                    println!("{}", command_str);
+
+                    // redraw window with output
+                    window.request_redraw();
+                }
+            WindowEvent::ReceivedCharacter(char_grabbed) =>{
+                // char is borrowed here so we clone
+                scratch_buf.push(char_grabbed.clone());
+                state.shell_buf.string_buf.push(char_grabbed.clone());
+                // redraw code
+                window.request_redraw();
             }
-            // All other errors (Outdated, Timeout)
-            // should be resolved by the next frame
-            Err(e) => eprintln!("{:?}", e),
-        }
- 
+            Event::RedrawRequested(win_id) if win_id == window.id() =>{
+                // Handle window event.
+                self.update();
+                match self.render() {
+                    Ok(_) => {}
+                    // Reconfigure the surface if lost
+                    Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+                    // The system is out of memory, we should probably quit
+                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                        *control_flow = ControlFlow::Exit;
+                    }
+                    // All other errors (Outdated, Timeout)
+                    // should be resolved by the next frame
+                    Err(e) => eprintln!("{:?}", e),
+                }
+            }
+            _ => {}
+       }
     }
 
     fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
@@ -1009,7 +1064,7 @@ impl ApplicationHandler for State {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-       self.window.request_redraw();
+        self.window.request_redraw();
         self.counter += 1;
     }
     

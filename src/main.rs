@@ -79,72 +79,7 @@ pub async fn run(){
 
     state.update();
 
-    // if <ESC> close window
-    event_loop.run(move |event, _, control_flow| match event {
-        Event::WindowEvent {
-            ref event,
-            window_id,
-        } if window_id == window.id() => match event {
-            WindowEvent::CloseRequested
-            | WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(Escape),
-                        ..
-                    },
-                ..
-            } => control_flow.exit(),
-            WindowEvent::KeyboardInput {
-                input: KeyboardInput {
-                    state:ElementState::Pressed,
-                    virtual_keycode: Some(VirtualKeyCode::Back),
-                    ..},
-                ..} => {
-                    // pop used to remove last char not for output
-                    scratch_buf.pop().unwrap();
-                    state.shell_buf.string_buf.pop().unwrap();
-                    window.request_redraw();
-                }
-            WindowEvent::KeyboardInput {
-                input: KeyboardInput {
-                    state:ElementState::Released,
-                    virtual_keycode: Some(VirtualKeyCode::Return),
-                    ..},
-                ..} => {
-                    // set window to and run command
-                    window.set_title(format!("hermitshell - {}", scratch_buf)
-                                     .as_str());
-                    writeln!(pty_pair.master, "{}\r\n", scratch_buf).unwrap();
-
-                    // clear buffer for next cmd
-                    scratch_buf.clear();
-                    // push output to buffer
-                    command_str.push_str(read_from_pty(&mut reader).as_str());
-                    state.shell_buf.string_buf.push_str(&command_str);
-
-                    #[cfg(debug_assertions)]
-                    println!("{}", command_str);
-
-                    // redraw window with output
-                    window.request_redraw();
-                }
-            WindowEvent::ReceivedCharacter(char_grabbed) =>{
-                // char is borrowed here so we clone
-                scratch_buf.push(char_grabbed.clone());
-                state.shell_buf.string_buf.push(char_grabbed.clone());
-                // redraw code
-                window.request_redraw();
-            }
-            _ => {}
-        },
-        Event::RedrawRequested(win_id) if win_id == window.id() =>{
-
-        }
-        _ => {}
-    });
-
-
+    event_loop.run_app(&mut state);
 }
 
 fn main(){
