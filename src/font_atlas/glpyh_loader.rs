@@ -1,4 +1,3 @@
-use core::slice::SlicePattern;
 use crate::TermConfig;
 use std::collections::HashMap;
 

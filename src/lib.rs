@@ -5,6 +5,7 @@
 #![feature(int_roundings)]
 #![feature(iter_intersperse)]
 #![feature(slice_pattern)] 
+#![feature(allocator_api)]
 pub mod font_atlas;
 use font_atlas::font_atlas::TermConfig;
 use font_atlas::glpyh_loader::GlpyhLoader;
@@ -16,12 +17,26 @@ use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
 use winit::{
     event::*,
-    window::Window
+    window::{Window, WindowId},
+    event_loop::ActiveEventLoop, 
+    keyboard::PhysicalKey,
+    keyboard::KeyCode
 };
+use portable_pty::{native_pty_system, PtySize, CommandBuilder};
 
-use core::slice::SlicePattern;
-use std::default;
-use std::iter;
+use std::{iter, io::Read, io::Write, alloc::Global};
+
+pub fn read_from_pty(reader: &mut Box<dyn Read + Send>) -> String {
+    // make buffer the same as a max data of the terminal
+    let mut u8_buf: [u8; 80*24] = [0; 80*24];
+    reader.read(&mut u8_buf).unwrap();
+
+    // convert u8 buffer to string
+    let str_buf:String = String::from_utf8(u8_buf.to_vec()).unwrap();
+
+    // return the output without left over data
+    return str_buf.trim_end().to_string();
+}
 
 #[repr(C)] #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
@@ -51,6 +66,10 @@ impl Vertex {
     }
 }
 
+pub struct Pty {
+    pub reader: Box<dyn Read + Send>,
+    pub writer: Box<dyn Write + Send, Global>,
+}
  
 pub struct State<'window>{
     device: wgpu::Device,
@@ -65,11 +84,14 @@ pub struct State<'window>{
     glpyh_indicies: [u16;6],
     glpyh_indicies_buf: wgpu::Buffer,
     glpyh_loader : GlpyhLoader,
+    pty: &'window mut Pty,
     // must be delcared last
+    window: &'window Window,
     surface: wgpu::Surface<'window>,
 }
 
 pub struct ShellBuf {
+    pub scratch: String,
     pub string_buf: String,
     pub glpyhs_pos: Vec<wgpu::Buffer>
 }
@@ -93,8 +115,8 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
 } 
 
 impl<'window> State<'window> {
-    pub async fn new(window: &'window Window, term_config : TermConfig) -> Self {
-
+    pub fn new(window: &'window Window, term_config : TermConfig, 
+        pty: &'window mut Pty) -> State<'window> {
         let (surface, mut device, mut queue, config) = 
             Self::surface_config(window).await;
 
@@ -207,7 +229,9 @@ impl<'window> State<'window> {
 
         // pack into struct
         return Self{
+                pty,
                 surface,
+                window,
                 device,
                  queue,
                 config,
@@ -215,7 +239,9 @@ impl<'window> State<'window> {
                 render_pipeline,
                 // font_atlas,
                 shell_buf: ShellBuf{
-                    string_buf: String::new(), glpyhs_pos: vec![]
+                    scratch: String::new(),
+                    string_buf: String::new(), 
+                    glpyhs_pos: vec![]
                 },
                 glpyhs,
                 term_config,
@@ -327,7 +353,7 @@ impl<'window> State<'window> {
         return (render_pipeline, glpyh_sampler, glpyh_layout);
     }
 
-    pub async fn surface_config(window: &'window Window)
+    pub fn surface_config(window: &'window Window)
         -> (wgpu::Surface, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
@@ -338,7 +364,7 @@ impl<'window> State<'window> {
             gles_minor_version: Default::default(),
         });
 
-        let surface = unsafe { instance.create_surface(window) }.unwrap();
+        let surface = instance.create_surface(window).unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -697,7 +723,6 @@ impl<'window> State<'window> {
 
         // recreate loader to get texture sizes
         for (glpyh, bindgroup) in glpyhs {
-            
             // create coords:
             // start pos , bbox width + pos, bbox height + height
             let Some((bbox, _)) = glpyh_loader_dgb.glpyh_map.get(&glpyh)
@@ -982,90 +1007,139 @@ impl<'window> State<'window> {
 
 
 impl<'window> ApplicationHandler for State<'window> {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Your application got resumed.
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+        if cause == StartCause::Init {
+            let window = event_loop.create_window(
+                Window::default_attributes().with_title("hermitshell")).unwrap();
+
+                let pty_system = native_pty_system();
+                // TODO: set pixel size to font size
+                let pty_pair = pty_system.openpty(
+                    PtySize { rows: 80, cols: 24, pixel_width: 18, pixel_height: 18})
+                        .unwrap();
+
+                // spawn os-specific shell
+                #[cfg(target_os = "windows")]
+                let cmd = CommandBuilder::new("cmd");
+                #[cfg(target_os = "linux")]
+                let cmd = CommandBuilder::new("bash");
+                #[cfg(target_os = "macos")]
+                let cmd = CommandBuilder::new("bash");
+                pty_pair.slave.spawn_command(cmd).unwrap();
+
+                // create command reader for read_from_pty fn
+                let reader = pty_pair.master.try_clone_reader().unwrap();
+
+                use std::env;
+
+                let Some(font_dir) = env::args().nth(1) else {todo!()};
+             
+                // make buffers
+                // add carage return so that sh command starts up
+                let mut writer = pty_pair.master.take_writer().unwrap();
+                write!(writer, "\r\n").unwrap();
+
+                State::new(&window, TermConfig { font_dir, font_size: 64.0}, 
+                    &mut Pty {reader, writer});
+        }
+    }
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
-        match event {
-            WindowEvent::CloseRequested
-            | WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(Escape),
-                        ..
-                    },
-                ..
-            } => control_flow.exit(),
-            WindowEvent::KeyboardInput {
-                event: KeyboardInput {
-                    state:ElementState::Pressed,
-                    physical_key: PhysicalKey::Code(Back), 
-                    ..},
-                ..} => {
-                    // pop used to remove last char not for output
-                    scratch_buf.pop().unwrap();
-                    state.shell_buf.string_buf.pop().unwrap();
-                    window.request_redraw();
-                }
-            WindowEvent::KeyboardInput {
-                event: KeyboardInput {
-                    state:ElementState::Released,
-                    physical_key: PhysicalKey::Code(Return),
-                    ..},
-                ..} => {
-                    // set window to and run command
-                    window.set_title(format!("hermitshell - {}", scratch_buf)
-                                     .as_str());
-                    writeln!(pty_pair.master, "{}\r\n", scratch_buf).unwrap();
-
-                    // clear buffer for next cmd
-                    scratch_buf.clear();
-                    // push output to buffer
-                    command_str.push_str(read_from_pty(&mut reader).as_str());
-                    state.shell_buf.string_buf.push_str(&command_str);
-
-                    #[cfg(debug_assertions)]
-                    println!("{}", command_str);
-
-                    // redraw window with output
-                    window.request_redraw();
-                }
-            WindowEvent::ReceivedCharacter(char_grabbed) =>{
-                // char is borrowed here so we clone
-                scratch_buf.push(char_grabbed.clone());
-                state.shell_buf.string_buf.push(char_grabbed.clone());
-                // redraw code
-                window.request_redraw();
-            }
-            Event::RedrawRequested(win_id) if win_id == window.id() =>{
-                // Handle window event.
-                self.update();
-                match self.render() {
-                    Ok(_) => {}
-                    // Reconfigure the surface if lost
-                    Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-                    // The system is out of memory, we should probably quit
-                    Err(wgpu::SurfaceError::OutOfMemory) => {
-                        *control_flow = ControlFlow::Exit;
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, win_id: WindowId, event: WindowEvent) 
+    {
+        if self.window.id() == win_id{
+            match event {
+                WindowEvent::CloseRequested
+                | WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            state: ElementState::Pressed,
+                            physical_key: PhysicalKey::Code(KeyCode::Escape),
+                            ..
+                        },
+                    ..
+                } => event_loop.exit(),
+                WindowEvent::KeyboardInput {
+                    event: KeyEvent { 
+                        state:ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::Backspace), 
+                        ..},
+                    ..} => {
+                        // pop used to remove last char not for output
+                        self.shell_buf.scratch.pop().unwrap();
+                        self.shell_buf.string_buf.pop().unwrap();
+                        self.window.request_redraw();
                     }
-                    // All other errors (Outdated, Timeout)
-                    // should be resolved by the next frame
-                    Err(e) => eprintln!("{:?}", e),
+                WindowEvent::KeyboardInput  {
+                    event: KeyEvent {
+                        state:ElementState::Released,
+                        physical_key: PhysicalKey::Code(KeyCode::Enter),
+                        ..},
+                    ..} => {
+                        // set window to and run command
+                        self.window.set_title(format!("hermitshell - {}", 
+                                self.shell_buf.scratch).as_str());
+                            
+                        writeln!(self.pty.writer, 
+                            "{}\r\n", self.shell_buf.scratch).unwrap();
+
+                        // clear buffer for next cmd
+                        self.shell_buf.scratch.clear();
+                        // push output to buffer
+
+                        let command_str = read_from_pty(&mut self.pty.reader);
+
+                        #[cfg(debug_assertions)]
+                        println!("{}", command_str);
+
+                        self.shell_buf.string_buf.push_str(&command_str);
+                        self.window.request_redraw();
+
+                   }       
+               WindowEvent::KeyboardInput {
+                   event: KeyEvent { logical_key: key, state: ElementState::Pressed, ..},
+                          ..} => {
+                    
+                    // unstable so split
+                    // if let Some(str_grab) = key.to_text() && str_grab.len() <= 1{
+                    if let Some(str_grab) = key.to_text() {
+                        if str_grab.len() <= 1 {
+                            let char_grabbed = str_grab.chars().next().unwrap();     
+                            // char is borrowed here so we clone
+                            self.shell_buf.scratch.push(char_grabbed.clone());
+                            self.shell_buf.string_buf.push(char_grabbed.clone());
+                            // redraw code
+                            self.window.request_redraw();
+                        }
+                    }
                 }
-            }
-            _ => {}
-       }
+                WindowEvent::RedrawRequested =>{
+                    // Handle window event.
+                    self.update();
+                    match self.render() {
+                        Ok(_) => {}
+                        // Reconfigure the surface if lost
+                        Err(wgpu::SurfaceError::Lost) => self.resize(self.size),
+                        // The system is out of memory, we should probably quit
+                        Err(wgpu::SurfaceError::OutOfMemory) => {
+                            event_loop.exit();
+                        }
+                        // All other errors (Outdated, Timeout)
+                        // should be resolved by the next frame
+                        Err(e) => eprintln!("{:?}", e),
+                    }
+                }
+                _ => {}
+           }
+        }
     }
 
-    fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, _event: DeviceEvent) {
         // Handle device event.
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.window.request_redraw();
-        self.counter += 1;
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
     }
     
 }
