@@ -20,11 +20,12 @@ use winit::{
     window::{Window, WindowId},
     event_loop::ActiveEventLoop, 
     keyboard::PhysicalKey,
-    keyboard::KeyCode
+    keyboard::KeyCode,
+    dpi::PhysicalSize
 };
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};
 
-use std::{iter, io::Read, io::Write, alloc::Global};
+use std::{iter, io::Read, io::Write, alloc::Global, sync::Arc};
 
 pub fn read_from_pty(reader: &mut Box<dyn Read + Send>) -> String {
     // make buffer the same as a max data of the terminal
@@ -71,11 +72,11 @@ pub struct Pty {
     pub writer: Box<dyn Write + Send, Global>,
 }
  
+
 pub struct State<'window>{
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    pub size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
     // pub font_atlas: FontAtlas,
     glpyhs: HashMap<char, wgpu::BindGroup>,
@@ -85,9 +86,15 @@ pub struct State<'window>{
     glpyh_indicies_buf: wgpu::Buffer,
     glpyh_loader : GlpyhLoader,
     pty: &'window mut Pty,
+    pub size: PhysicalSize<u32>,
     // must be delcared last
-    window: &'window Window,
     surface: wgpu::Surface<'window>,
+}
+
+#[derive(Default)]
+pub struct App<'window> {
+    window: Option<Arc<Window>>,
+    state : Option<State<'window>>
 }
 
 pub struct ShellBuf {
@@ -115,10 +122,10 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
 } 
 
 impl<'window> State<'window> {
-    pub fn new(window: &'window Window, term_config : TermConfig, 
+    pub async fn async_new(window: Arc<Window>, term_config : TermConfig, 
         pty: &'window mut Pty) -> State<'window> {
         let (surface, mut device, mut queue, config) = 
-            Self::surface_config(window).await;
+            Self::surface_config(Arc::clone(&window)).await;
 
         /*
         // load fontatlas
@@ -203,7 +210,7 @@ impl<'window> State<'window> {
         } 
         */
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
-            Self::make_render_pipeline(&mut device, config.format); 
+            Self::make_render_pipeline(&mut device, config.format).await; 
 
         let glpyh_loader = GlpyhLoader::new(term_config.clone());
 
@@ -227,16 +234,17 @@ impl<'window> State<'window> {
                 usage: wgpu::BufferUsages::INDEX,
         });
 
+        let size = window.inner_size();
+
         // pack into struct
         return Self{
                 pty,
                 surface,
-                window,
                 device,
                  queue,
                 config,
-                size: window.inner_size(),
                 render_pipeline,
+                size,
                 // font_atlas,
                 shell_buf: ShellBuf{
                     scratch: String::new(),
@@ -250,8 +258,13 @@ impl<'window> State<'window> {
                 glpyh_loader
            }
     }
+
+    pub fn new(window: Arc<Window>, term_config : TermConfig, 
+        pty: &'window mut Pty) -> State{
+        return pollster::block_on(State::async_new(window, term_config, pty))
+    }
             
-    pub fn make_render_pipeline(device: &mut wgpu::Device, 
+    pub async fn make_render_pipeline(device: &mut wgpu::Device, 
                                  config: TextureFormat) ->
          (RenderPipeline, wgpu::Sampler, wgpu::BindGroupLayout) {
         
@@ -353,8 +366,8 @@ impl<'window> State<'window> {
         return (render_pipeline, glpyh_sampler, glpyh_layout);
     }
 
-    pub fn surface_config(window: &'window Window)
-        -> (wgpu::Surface, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
+    pub async fn surface_config(window: Arc<Window>)
+        -> (wgpu::Surface::<'window>, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration) {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -364,7 +377,7 @@ impl<'window> State<'window> {
             gles_minor_version: Default::default(),
         });
 
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(Arc::clone(&window)).unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -523,7 +536,7 @@ impl<'window> State<'window> {
 
                 #[cfg(debug_assertions)]
                 {
-                    use image::{Rgba};
+                    use image::Rgba;
                     match image::ImageBuffer::<Rgba<u8>,_>::from_raw(
                        bbox.width as u32, bbox.height as u32, glpyh_slice.as_slice()){
                         Some(im) => { 
@@ -602,7 +615,6 @@ impl<'window> State<'window> {
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
-            self.size = new_size;
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
@@ -701,7 +713,7 @@ impl<'window> State<'window> {
             None).await.unwrap();
 
         let (render_pipeline, glpyh_sampler, glpyh_layout) = 
-            Self::make_render_pipeline(&mut device, wgpu::TextureFormat::Rgba8UnormSrgb);
+            Self::make_render_pipeline(&mut device, wgpu::TextureFormat::Rgba8UnormSrgb).await;
         
         // repopulate hashmap in font_atlas
         // let font_atlas = FontAtlas::new(self.term_config.clone(), &mut device,
@@ -906,7 +918,6 @@ impl<'window> State<'window> {
            
                 
                     // save the glpyh to .png
-                    use image::{ImageBuffer, Rgba};
                     let Some(buffer) =
                        ImageBuffer::<Rgba<u8>, _>::from_raw(bbox.width as u32, 
                                                             bbox.height as u32,
@@ -1006,9 +1017,9 @@ impl<'window> State<'window> {
 }
 
 
-impl<'window> ApplicationHandler for State<'window> {
+impl<'window> ApplicationHandler for App<'window> {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
-        if cause == StartCause::Init {
+        if cause == StartCause::Init && self.window.is_none() {
             let window = event_loop.create_window(
                 Window::default_attributes().with_title("hermitshell")).unwrap();
 
@@ -1039,16 +1050,19 @@ impl<'window> ApplicationHandler for State<'window> {
                 let mut writer = pty_pair.master.take_writer().unwrap();
                 write!(writer, "\r\n").unwrap();
 
-                State::new(&window, TermConfig { font_dir, font_size: 64.0}, 
+                State::new(Arc::new(window), TermConfig { font_dir, font_size: 64.0}, 
                     &mut Pty {reader, writer});
         }
     }
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, win_id: WindowId, event: WindowEvent) 
     {
-        if self.window.id() == win_id{
+        if let Some(window) = &mut self.window {
+            if window.id() == win_id {
+            if let Some(state)  = &mut self.state {
             match event {
                 WindowEvent::CloseRequested
                 | WindowEvent::KeyboardInput {
@@ -1067,9 +1081,9 @@ impl<'window> ApplicationHandler for State<'window> {
                         ..},
                     ..} => {
                         // pop used to remove last char not for output
-                        self.shell_buf.scratch.pop().unwrap();
-                        self.shell_buf.string_buf.pop().unwrap();
-                        self.window.request_redraw();
+                        state.shell_buf.scratch.pop().unwrap();
+                        state.shell_buf.string_buf.pop().unwrap();
+                        window.request_redraw();
                     }
                 WindowEvent::KeyboardInput  {
                     event: KeyEvent {
@@ -1078,23 +1092,23 @@ impl<'window> ApplicationHandler for State<'window> {
                         ..},
                     ..} => {
                         // set window to and run command
-                        self.window.set_title(format!("hermitshell - {}", 
-                                self.shell_buf.scratch).as_str());
+                        window.set_title(format!("hermitshell - {}", 
+                                state.shell_buf.scratch).as_str());
                             
-                        writeln!(self.pty.writer, 
-                            "{}\r\n", self.shell_buf.scratch).unwrap();
+                        writeln!(state.pty.writer, 
+                            "{}\r\n", state.shell_buf.scratch).unwrap();
 
                         // clear buffer for next cmd
-                        self.shell_buf.scratch.clear();
+                        state.shell_buf.scratch.clear();
                         // push output to buffer
 
-                        let command_str = read_from_pty(&mut self.pty.reader);
+                        let command_str = read_from_pty(&mut state.pty.reader);
 
                         #[cfg(debug_assertions)]
                         println!("{}", command_str);
 
-                        self.shell_buf.string_buf.push_str(&command_str);
-                        self.window.request_redraw();
+                        state.shell_buf.string_buf.push_str(&command_str);
+                        window.request_redraw();
 
                    }       
                WindowEvent::KeyboardInput {
@@ -1107,20 +1121,20 @@ impl<'window> ApplicationHandler for State<'window> {
                         if str_grab.len() <= 1 {
                             let char_grabbed = str_grab.chars().next().unwrap();     
                             // char is borrowed here so we clone
-                            self.shell_buf.scratch.push(char_grabbed.clone());
-                            self.shell_buf.string_buf.push(char_grabbed.clone());
+                            state.shell_buf.scratch.push(char_grabbed.clone());
+                            state.shell_buf.string_buf.push(char_grabbed.clone());
                             // redraw code
-                            self.window.request_redraw();
+                            window.request_redraw();
                         }
                     }
                 }
                 WindowEvent::RedrawRequested =>{
                     // Handle window event.
-                    self.update();
-                    match self.render() {
+                    state.update();
+                    match state.render() {
                         Ok(_) => {}
                         // Reconfigure the surface if lost
-                        Err(wgpu::SurfaceError::Lost) => self.resize(self.size),
+                        Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
                         // The system is out of memory, we should probably quit
                         Err(wgpu::SurfaceError::OutOfMemory) => {
                             event_loop.exit();
@@ -1132,6 +1146,8 @@ impl<'window> ApplicationHandler for State<'window> {
                 }
                 _ => {}
            }
+        }
+        }
         }
     }
 
