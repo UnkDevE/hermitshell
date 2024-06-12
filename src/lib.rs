@@ -25,7 +25,7 @@ use winit::{
 };
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};
 
-use std::{iter, io::Read, io::Write, alloc::Global, sync::Arc};
+use std::{iter, io::Read, io::Write, alloc::Global, sync::{Arc, Mutex}};
 
 pub fn read_from_pty(reader: &mut Box<dyn Read + Send>) -> String {
     // make buffer the same as a max data of the terminal
@@ -85,16 +85,16 @@ pub struct State<'window>{
     glpyh_indicies: [u16;6],
     glpyh_indicies_buf: wgpu::Buffer,
     glpyh_loader : GlpyhLoader,
-    pty: &'window mut Pty,
+    pty: Pty,
     pub size: PhysicalSize<u32>,
     // must be delcared last
     surface: wgpu::Surface<'window>,
 }
 
 #[derive(Default)]
-pub struct App<'window> {
+pub struct App {
     window: Option<Arc<Window>>,
-    state : Option<State<'window>>
+    state : Option<State<'static>>,
 }
 
 pub struct ShellBuf {
@@ -123,7 +123,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
 
 impl<'window> State<'window> {
     pub async fn async_new(window: Arc<Window>, term_config : TermConfig, 
-        pty: &'window mut Pty) -> State<'window> {
+        pty: Pty) -> State<'window> {
         let (surface, mut device, mut queue, config) = 
             Self::surface_config(Arc::clone(&window)).await;
 
@@ -260,8 +260,8 @@ impl<'window> State<'window> {
     }
 
     pub fn new(window: Arc<Window>, term_config : TermConfig, 
-        pty: &'window mut Pty) -> State{
-        return pollster::block_on(State::async_new(window, term_config, pty))
+        pty: Pty) -> State<'window>{
+        return pollster::block_on(State::async_new(Arc::clone(&window), term_config, pty))
     }
             
     pub async fn make_render_pipeline(device: &mut wgpu::Device, 
@@ -401,7 +401,7 @@ impl<'window> State<'window> {
             .await
             .unwrap();
 
-        let size = window.inner_size();
+        let size = Arc::clone(&window).clone().inner_size();
         let capablities = surface.get_capabilities(&adapter);
 
         let config = wgpu::SurfaceConfiguration {
@@ -1017,11 +1017,12 @@ impl<'window> State<'window> {
 }
 
 
-impl<'window> ApplicationHandler for App<'window> {
+impl<'window> ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         if cause == StartCause::Init && self.window.is_none() {
             let window = event_loop.create_window(
                 Window::default_attributes().with_title("hermitshell")).unwrap();
+                self.window = Some(Arc::new(window));
 
                 let pty_system = native_pty_system();
                 // TODO: set pixel size to font size
@@ -1050,12 +1051,13 @@ impl<'window> ApplicationHandler for App<'window> {
                 let mut writer = pty_pair.master.take_writer().unwrap();
                 write!(writer, "\r\n").unwrap();
 
-                State::new(Arc::new(window), TermConfig { font_dir, font_size: 64.0}, 
-                    &mut Pty {reader, writer});
+                self.state = Some(State::new(Arc::clone(self.window.as_ref().unwrap()),
+                    TermConfig { font_dir, font_size: 64.0}, 
+                    Pty{reader, writer}));
         }
     }
 
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, win_id: WindowId, event: WindowEvent) 
