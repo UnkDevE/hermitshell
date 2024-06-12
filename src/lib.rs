@@ -372,7 +372,7 @@ impl<'window> State<'window> {
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             flags: wgpu::InstanceFlags::default(),
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::default(),
             dx12_shader_compiler: Default::default(),
             gles_minor_version: Default::default(),
         });
