@@ -86,7 +86,7 @@ pub struct State<'window>{
     glpyh_indicies: [u16;6],
     glpyh_indicies_buf: wgpu::Buffer,
     glpyh_loader : GlpyhLoader,
-    pty: Pty,
+    pub pty: Pty,
     pub size: PhysicalSize<u32>,
     // must be delcared last
     surface: wgpu::Surface<'window>,
@@ -621,6 +621,7 @@ impl<'window> State<'window> {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.size = new_size;
         }
 
         self.update()
@@ -692,6 +693,7 @@ impl<'window> State<'window> {
             if i > 1 {
                 // move down by height 
                 self.start.1 += self.start.1;
+                self.start.0 = 0.;
             }
         }
     }
@@ -1060,7 +1062,19 @@ impl<'window> ApplicationHandler for App {
         }
     }
 
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(state) = &mut self.state {
+            let window = event_loop.create_window(
+                Window::default_attributes().with_title("hermitshell")).unwrap();
+                self.window = Some(Arc::new(window));
+               
+            // mutexes here?
+            let pty = state.pty;
+            
+        }
+        else{
+            self.new_events(event_loop, StartCause::Init);
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, win_id: WindowId, event: WindowEvent) 
