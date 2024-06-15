@@ -74,6 +74,7 @@ pub struct Pty {
  
 
 pub struct State<'window>{
+    start: (f32, f32),
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -235,9 +236,11 @@ impl<'window> State<'window> {
         });
 
         let size = window.inner_size();
+        let start : (f32, f32) = (0.0,0.0);
 
         // pack into struct
         return Self{
+                start,
                 pty,
                 surface,
                 device,
@@ -459,7 +462,7 @@ impl<'window> State<'window> {
 
             {
                 #[cfg(debug_assertions)]
-                println!("polling device for glpyh {} started", glpyh);
+                println!("polling device for glpyh {} self.started", glpyh);
 
                 device.poll(wgpu::Maintain::Wait);
 
@@ -600,7 +603,7 @@ impl<'window> State<'window> {
             }
 
             #[cfg(debug_assertions)]
-            println!("starting submitted glpyh queue polling");
+            println!("self.starting submitted glpyh queue polling");
 
             device.poll(wgpu::Maintain::Wait);
 
@@ -630,8 +633,7 @@ impl<'window> State<'window> {
 
     pub fn update(&mut self) {
         // set the position for drawing charecters
-        let mut start : (f32, f32) = (0.0,0.0);
-        for line in self.shell_buf.string_buf.lines(){
+        for (i, line) in self.shell_buf.string_buf.lines().enumerate(){
             for cbuf_char in line.chars() {
                 let Some((bbox, _)) = self.glpyh_loader.glpyh_map.get(&cbuf_char) else 
                     { continue; };    
@@ -654,22 +656,22 @@ impl<'window> State<'window> {
                   ];
               */
                 // create coords:
-                // start pos , bbox width + pos, bbox height + height
+                // self.start pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[ 
-                    Vertex { position: [start.0 , start.1 + bbox_normalized.1, 0.0],
+                    Vertex { position: [self.start.0 , self.start.1 + bbox_normalized.1, 0.0],
                             tex_coords: [0.0, 0.0]}, // t lh corner
-                    Vertex { position: [start.0 , start.1
+                    Vertex { position: [self.start.0 , self.start.1
                         , 0.0], tex_coords: [0.0, 1.0], }, // b lh corner
-                    Vertex { position: [(start.0 + bbox_normalized.0),
-                        start.1 + bbox_normalized.1, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
-                   Vertex { position: [start.0 + bbox_normalized.0, start.1 
+                    Vertex { position: [(self.start.0 + bbox_normalized.0),
+                        self.start.1 + bbox_normalized.1, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
+                   Vertex { position: [self.start.0 + bbox_normalized.0, self.start.1 
                         ,0.0], tex_coords: [1.0, 1.0], }, // b rh corner
                   ];
 
                 // add position for next char
-                start.0 += bbox_normalized.0; // set as width
-                // if start smaller than bbox then set as bbox 
-                if start.1 < bbox_normalized.1 { start.1 = bbox_normalized.1}
+                self.start.0 += bbox_normalized.0; // set as width
+                // if self.start smaller than bbox then set as bbox 
+                if self.start.1 < bbox_normalized.1 { self.start.1 = bbox_normalized.1}
 
                 #[cfg(debug_assertions)]{
                     println!("bbox normalized for rendered glpyh: ({}, {})",
@@ -687,9 +689,10 @@ impl<'window> State<'window> {
 
                 self.shell_buf.glpyhs_pos.push(glpyh_buf);
             }
-
-            // move down by height 
-            start.1 += start.1;
+            if i > 1 {
+                // move down by height 
+                self.start.1 += self.start.1;
+            }
         }
     }
 
@@ -736,7 +739,7 @@ impl<'window> State<'window> {
         // recreate loader to get texture sizes
         for (glpyh, bindgroup) in glpyhs {
             // create coords:
-            // start pos , bbox width + pos, bbox height + height
+            // self.start pos , bbox width + pos, bbox height + height
             let Some((bbox, _)) = glpyh_loader_dgb.glpyh_map.get(&glpyh)
             else { panic!("no bbox for glpyhs debugging") };
 
@@ -1047,7 +1050,7 @@ impl<'window> ApplicationHandler for App {
                 let Some(font_dir) = env::args().nth(1) else {todo!()};
              
                 // make buffers
-                // add carage return so that sh command starts up
+                // add carage return so that sh command self.starts up
                 let mut writer = pty_pair.master.take_writer().unwrap();
                 write!(writer, "\r\n").unwrap();
 
@@ -1083,8 +1086,8 @@ impl<'window> ApplicationHandler for App {
                         ..},
                     ..} => {
                         // pop used to remove last char not for output
-                        state.shell_buf.scratch.pop().unwrap();
-                        state.shell_buf.string_buf.pop().unwrap();
+                        state.shell_buf.scratch.pop().unwrap_or_default();
+                        state.shell_buf.string_buf.pop().unwrap_or_default();
                         window.request_redraw();
                     }
                 WindowEvent::KeyboardInput  {
