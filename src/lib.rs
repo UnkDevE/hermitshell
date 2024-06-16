@@ -15,6 +15,7 @@ use wgpu::TextureFormat;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
+use winit::event;
 use winit::{
     event::*,
     window::{Window, WindowId},
@@ -25,6 +26,7 @@ use winit::{
 };
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};
 
+use std::borrow::BorrowMut;
 use std::{iter, io::Read, io::Write, alloc::Global, sync::{Arc, Mutex}};
 
 pub fn read_from_pty(reader: &mut Box<dyn Read + Send>) -> String {
@@ -72,7 +74,6 @@ pub struct Pty {
     pub writer: Box<dyn Write + Send, Global>,
 }
  
-
 pub struct State<'window>{
     start: (f32, f32),
     device: wgpu::Device,
@@ -86,7 +87,7 @@ pub struct State<'window>{
     glpyh_indicies: [u16;6],
     glpyh_indicies_buf: wgpu::Buffer,
     glpyh_loader : GlpyhLoader,
-    pub pty: Pty,
+    pub pty: Arc<Mutex<Pty>>,
     pub size: PhysicalSize<u32>,
     // must be delcared last
     surface: wgpu::Surface<'window>,
@@ -124,7 +125,7 @@ pub fn remove_duplicates(mut s: String) -> (HashMap<char,i32>, String) {
 
 impl<'window> State<'window> {
     pub async fn async_new(window: Arc<Window>, term_config : TermConfig, 
-        pty: Pty) -> State<'window> {
+        pty: Arc<Mutex<Pty>>) -> State<'window> {
         let (surface, mut device, mut queue, config) = 
             Self::surface_config(Arc::clone(&window)).await;
 
@@ -263,7 +264,7 @@ impl<'window> State<'window> {
     }
 
     pub fn new(window: Arc<Window>, term_config : TermConfig, 
-        pty: Pty) -> State<'window>{
+        pty: Arc<Mutex<Pty>>) -> State<'window>{
         return pollster::block_on(State::async_new(Arc::clone(&window), term_config, pty))
     }
             
@@ -1055,22 +1056,27 @@ impl<'window> ApplicationHandler for App {
                 // add carage return so that sh command self.starts up
                 let mut writer = pty_pair.master.take_writer().unwrap();
                 write!(writer, "\r\n").unwrap();
+                let pty = Arc::new(Mutex::new(Pty{reader,writer}));
 
                 self.state = Some(State::new(Arc::clone(self.window.as_ref().unwrap()),
-                    TermConfig { font_dir, font_size: 64.0}, 
-                    Pty{reader, writer}));
+                    TermConfig { font_dir, font_size: 64.0}, pty)); 
         }
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(state) = &mut self.state {
+        if let Some(window) = &self.window {
+            if let Some(state) = &mut self.state {
+                state.resize(window.inner_size());
+            }
+        }
+        else if let Some(state) = &mut self.state {
             let window = event_loop.create_window(
                 Window::default_attributes().with_title("hermitshell")).unwrap();
                 self.window = Some(Arc::new(window));
                
-            // mutexes here?
-            let pty = state.pty;
-            
+            let pty = state.pty.borrow_mut();
+            self.state = Some(State::new(Arc::clone(&self.window.as_ref().unwrap()), 
+                    state.term_config.clone(), Arc::clone(pty)));
         }
         else{
             self.new_events(event_loop, StartCause::Init);
@@ -1114,21 +1120,21 @@ impl<'window> ApplicationHandler for App {
                         window.set_title(format!("hermitshell - {}", 
                                 state.shell_buf.scratch).as_str());
                             
-                        writeln!(state.pty.writer, 
-                            "{}\r\n", state.shell_buf.scratch).unwrap();
+                        if let Ok(pty) = state.pty.lock().as_mut() {
+                            writeln!(pty.writer, 
+                                "{}\r\n", state.shell_buf.scratch).unwrap();
 
-                        // clear buffer for next cmd
-                        state.shell_buf.scratch.clear();
-                        // push output to buffer
+                            // clear buffer for next cmd
+                            state.shell_buf.scratch.clear();
+                            // push output to buffer
+                            let command_str = read_from_pty(&mut pty.reader);
 
-                        let command_str = read_from_pty(&mut state.pty.reader);
+                            #[cfg(debug_assertions)]
+                            println!("{}", command_str);
 
-                        #[cfg(debug_assertions)]
-                        println!("{}", command_str);
-
-                        state.shell_buf.string_buf.push_str(&command_str);
-                        window.request_redraw();
-
+                            state.shell_buf.string_buf.push_str(&command_str);
+                            window.request_redraw();
+                        }
                    }       
                WindowEvent::KeyboardInput {
                    event: KeyEvent { logical_key: key, state: ElementState::Pressed, ..},
@@ -1138,12 +1144,14 @@ impl<'window> ApplicationHandler for App {
                     // if let Some(str_grab) = key.to_text() && str_grab.len() <= 1{
                     if let Some(str_grab) = key.to_text() {
                         if str_grab.len() <= 1 {
-                            let char_grabbed = str_grab.chars().next().unwrap();     
-                            // char is borrowed here so we clone
-                            state.shell_buf.scratch.push(char_grabbed.clone());
-                            state.shell_buf.string_buf.push(char_grabbed.clone());
-                            // redraw code
-                            window.request_redraw();
+                            if let Ok(_pty) = state.pty.lock().as_mut() {
+                                let char_grabbed = str_grab.chars().next().unwrap();     
+                                // char is borrowed here so we clone
+                                state.shell_buf.scratch.push(char_grabbed.clone());
+                                state.shell_buf.string_buf.push(char_grabbed.clone());
+                                // redraw code
+                                window.request_redraw();
+                            }
                         }
                     }
                 }
