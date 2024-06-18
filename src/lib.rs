@@ -237,7 +237,7 @@ impl<'window> State<'window> {
         });
 
         let size = window.inner_size();
-        let start : (f32, f32) = (0.0,0.0);
+        let start : (f32, f32) = (-1.0,1.0);
 
         // pack into struct
         return Self{
@@ -635,8 +635,10 @@ impl<'window> State<'window> {
 
     pub fn update(&mut self) {
         // set the position for drawing charecters
+        let mut linestart = self.start; 
         for (i, line) in self.shell_buf.string_buf.lines().enumerate(){
             for cbuf_char in line.chars() {
+                linestart = self.start;
                 let Some((bbox, _)) = self.glpyh_loader.glpyh_map.get(&cbuf_char) else 
                     { continue; };    
 
@@ -658,22 +660,22 @@ impl<'window> State<'window> {
                   ];
               */
                 // create coords:
-                // self.start pos , bbox width + pos, bbox height + height
+                // linestart pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[ 
-                    Vertex { position: [self.start.0 , self.start.1 + bbox_normalized.1, 0.0],
+                    Vertex { position: [linestart.0 , linestart.1, 0.0],
                             tex_coords: [0.0, 0.0]}, // t lh corner
-                    Vertex { position: [self.start.0 , self.start.1
+                    Vertex { position: [linestart.0 , linestart.1 - bbox_normalized.1 
                         , 0.0], tex_coords: [0.0, 1.0], }, // b lh corner
-                    Vertex { position: [(self.start.0 + bbox_normalized.0),
-                        self.start.1 + bbox_normalized.1, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
-                   Vertex { position: [self.start.0 + bbox_normalized.0, self.start.1 
-                        ,0.0], tex_coords: [1.0, 1.0], }, // b rh corner
+                    Vertex { position: [(linestart.0 + bbox_normalized.0),
+                        linestart.1, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
+                   Vertex { position: [linestart.0 + bbox_normalized.0, 
+                    linestart.1 - bbox_normalized.1,0.0], tex_coords: [1.0, 1.0], }, // b rh corner
                   ];
 
                 // add position for next char
                 self.start.0 += bbox_normalized.0; // set as width
-                // if self.start smaller than bbox then set as bbox 
-                if self.start.1 < bbox_normalized.1 { self.start.1 = bbox_normalized.1}
+                // if linestart smaller than bbox then set as bbox 
+                if linestart.1 < bbox_normalized.1 { linestart.1 = bbox_normalized.1}
 
                 #[cfg(debug_assertions)]{
                     println!("bbox normalized for rendered glpyh: ({}, {})",
@@ -693,8 +695,8 @@ impl<'window> State<'window> {
             }
             if i > 1 {
                 // move down by height 
-                self.start.1 += self.start.1;
-                self.start.0 = 0.;
+                self.start.0 = 0.0;
+                self.start.1 -= linestart.1;
             }
         }
     }
