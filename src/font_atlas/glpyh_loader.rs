@@ -1,3 +1,5 @@
+use fontdue::Font;
+
 use crate::TermConfig;
 use std::collections::HashMap;
 
@@ -15,7 +17,8 @@ impl PartialEq for BBox {
 }
 
 pub struct GlpyhLoader {
-    pub glpyh_map: HashMap<char, (BBox, Vec<u8>)>
+    pub glpyh_map: HashMap<char, (BBox, Vec<u8>)>,
+    pub font: Font
 }
 
 impl GlpyhLoader {
@@ -70,7 +73,7 @@ impl GlpyhLoader {
             }
         }
 
-        return Self {glpyh_map};
+        return Self {glpyh_map, font: face};
     }
 
     // pads data from row_width to offset

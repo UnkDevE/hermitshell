@@ -15,7 +15,6 @@ use wgpu::TextureFormat;
 use wgpu::{include_wgsl, CommandEncoderDescriptor, RenderPipeline};
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
-use winit::event;
 use winit::{
     event::*,
     window::{Window, WindowId},
@@ -25,6 +24,7 @@ use winit::{
     dpi::PhysicalSize
 };
 use portable_pty::{native_pty_system, PtySize, CommandBuilder};
+use fontdue::layout::{CoordinateSystem, Layout, TextStyle};
 
 use std::borrow::BorrowMut;
 use std::{iter, io::Read, io::Write, alloc::Global, sync::{Arc, Mutex}};
@@ -75,7 +75,6 @@ pub struct Pty {
 }
  
 pub struct State<'window>{
-    start: (f32, f32),
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -237,15 +236,13 @@ impl<'window> State<'window> {
         });
 
         let size = window.inner_size();
-        let start : (f32, f32) = (-1.0,1.0);
 
         // pack into struct
         return Self{
-                start,
                 pty,
                 surface,
                 device,
-                 queue,
+                queue,
                 config,
                 render_pipeline,
                 size,
@@ -635,17 +632,20 @@ impl<'window> State<'window> {
 
     pub fn update(&mut self) {
         // set the position for drawing charecters
-        let mut linestart = self.start; 
-        for (i, line) in self.shell_buf.string_buf.lines().enumerate(){
-            for cbuf_char in line.chars() {
-                linestart = self.start;
-                let Some((bbox, _)) = self.glpyh_loader.glpyh_map.get(&cbuf_char) else 
-                    { continue; };    
+        let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
+        let fonts = &[self.glpyh_loader.font.clone()];
 
-                let bbox_normalized = 
-                    ((bbox.width as f64 / self.config.width as f64) as f32,
-                     (bbox.height as f64 / self.config.height as f64) as f32);
-
+        for line in self.shell_buf.string_buf.lines() {
+            layout.append(fonts, &TextStyle::new(line, self.term_config.font_size, 0));
+            let glpyhs = layout.glyphs();
+            for glpyh in glpyhs {
+                let (x, y) = 
+                    ((glpyh.x / self.config.width as f32),
+                     (glpyh.y / self.config.height as f32));
+                 
+                let (width, height) = 
+                    ((glpyh.width as f32 / self.config.width as f32),
+                     (glpyh.height as f32 / self.config.height as f32));
                 /*
                  * this mirrors debug coords
                 let glpyh_vert: &[Vertex] = &[
@@ -662,43 +662,32 @@ impl<'window> State<'window> {
                 // create coords:
                 // linestart pos , bbox width + pos, bbox height + height
                 let glpyh_vert: &[Vertex] = &[ 
-                    Vertex { position: [linestart.0 , linestart.1, 0.0],
+                    Vertex { position: [x, y + height, 0.0],
                             tex_coords: [0.0, 0.0]}, // t lh corner
-                    Vertex { position: [linestart.0 , linestart.1 - bbox_normalized.1 
+                    Vertex { position: [x, y  
                         , 0.0], tex_coords: [0.0, 1.0], }, // b lh corner
-                    Vertex { position: [(linestart.0 + bbox_normalized.0),
-                        linestart.1, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
-                   Vertex { position: [linestart.0 + bbox_normalized.0, 
-                    linestart.1 - bbox_normalized.1,0.0], tex_coords: [1.0, 1.0], }, // b rh corner
+                    Vertex { position: [x + width, 
+                       y + height, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
+                   Vertex { position: [x,
+                    y + height,0.0], tex_coords: [1.0, 1.0], }, // b rh corner
                   ];
 
-                // add position for next char
-                self.start.0 += bbox_normalized.0; // set as width
-                // if linestart smaller than bbox then set as bbox 
-                if linestart.1 < bbox_normalized.1 { linestart.1 = bbox_normalized.1}
-
-                #[cfg(debug_assertions)]{
-                    println!("bbox normalized for rendered glpyh: ({}, {})",
-                        bbox_normalized.0, bbox_normalized.1);
+                #[cfg(debug_assertions)]
+                {
+                    println!("{:?}", glpyh_vert);
                 }
-
 
                // create buffer for position
                 let glpyh_buf = self.device.create_buffer_init(
                     &wgpu::util::BufferInitDescriptor { 
-                        label: Some(&format!("buffer {}", cbuf_char)),
+                        label: Some(&format!("buffer {}", glpyh.parent)),
                         contents: bytemuck::cast_slice(glpyh_vert),
                         usage: wgpu::BufferUsages::VERTEX,
                 });
 
                 self.shell_buf.glpyhs_pos.push(glpyh_buf);
             }
-            if i > 1 {
-                // move down by height 
-                self.start.0 = 0.0;
-                self.start.1 -= linestart.1;
-            }
-        }
+       }
     }
 
     // BIG OVERHEAD, creates copy of renderpipline to debug glpyh usage
@@ -1057,11 +1046,20 @@ impl<'window> ApplicationHandler for App {
                 // make buffers
                 // add carage return so that sh command self.starts up
                 let mut writer = pty_pair.master.take_writer().unwrap();
-                write!(writer, "\r\n").unwrap();
+                write!(writer, "\n").unwrap();
                 let pty = Arc::new(Mutex::new(Pty{reader,writer}));
 
                 self.state = Some(State::new(Arc::clone(self.window.as_ref().unwrap()),
-                    TermConfig { font_dir, font_size: 64.0}, pty)); 
+                    TermConfig { font_dir, font_size: 18.0}, pty)); 
+
+                {
+                    if let Some(win) = &self.window { 
+                        self.window_event(event_loop, win.id(),WindowEvent::RedrawRequested);
+                    }
+                    else {
+                        println!("redraw failed waiting for user input");
+                    }
+                }
         }
     }
 
