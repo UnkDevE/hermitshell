@@ -318,6 +318,7 @@ impl<'window> State<'window> {
         );
         let render_pipeline = 
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                cache: None,
                 label: Some("Render Pipeline"),
                 layout: Some(&render_pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -391,6 +392,7 @@ impl<'window> State<'window> {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
                     required_features: Default::default(),
                     required_limits: Default::default(),
                     label: Some("terminal adapter"),
@@ -632,62 +634,63 @@ impl<'window> State<'window> {
 
     pub fn update(&mut self) {
         // set the position for drawing charecters
-        let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
+        let mut layout = Layout::new(CoordinateSystem::PositiveYUp);
         let fonts = &[self.glpyh_loader.font.clone()];
+        let start = (-1.0, 1.0);
+        layout.append(fonts, &TextStyle::new(&self.shell_buf.string_buf, 
+                self.term_config.font_size, 0));
 
-        for line in self.shell_buf.string_buf.lines() {
-            layout.append(fonts, &TextStyle::new(line, self.term_config.font_size, 0));
-            let glpyhs = layout.glyphs();
-            for glpyh in glpyhs {
-                let (x, y) = 
-                    ((glpyh.x / self.config.width as f32),
-                     (glpyh.y / self.config.height as f32));
-                 
-                let (width, height) = 
-                    ((glpyh.width as f32 / self.config.width as f32),
-                     (glpyh.height as f32 / self.config.height as f32));
-                /*
-                 * this mirrors debug coords
-                let glpyh_vert: &[Vertex] = &[
-                    Vertex { position: [0.0, 1.0, 0.0],
-                        tex_coords: [0.0, 0.0], }, // t lh corner
-                    Vertex { position: [0.0, 0.0
-                        ,0.0], tex_coords: [0.0, 1.0]}, // b lh corner
-                   Vertex { position: [1.0, 1.0 
-                        , 0.0], tex_coords: [1.0, 0.0], }, // t rh corner
-                   Vertex { position: [1.0, 0.0, 0.0], 
-                        tex_coords: [1.0,1.0],},  // b rh corner
-                  ];
-              */
-                // create coords:
-                // linestart pos , bbox width + pos, bbox height + height
-                let glpyh_vert: &[Vertex] = &[ 
-                    Vertex { position: [x, y + height, 0.0],
-                            tex_coords: [0.0, 0.0]}, // t lh corner
-                    Vertex { position: [x, y  
-                        , 0.0], tex_coords: [0.0, 1.0], }, // b lh corner
-                    Vertex { position: [x + width, 
-                       y + height, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
-                   Vertex { position: [x,
-                    y + height,0.0], tex_coords: [1.0, 1.0], }, // b rh corner
-                  ];
+        let glpyhs = layout.glyphs();
+        for glpyh in glpyhs {
+            let (x, y) = 
+                ((glpyh.x / self.config.width as f32),
+                 (glpyh.y / self.config.height as f32));
+             
+            let (width, height) = 
+                ((glpyh.width as f32 / self.config.width as f32),
+                 (glpyh.height as f32 / self.config.height as f32));
+            /*
+             * this mirrors debug coords
+            let glpyh_vert: &[Vertex] = &[
+                Vertex { position: [0.0, 1.0, 0.0],
+                    tex_coords: [0.0, 0.0], }, // t lh corner
+                Vertex { position: [0.0, 0.0
+                    ,0.0], tex_coords: [0.0, 1.0]}, // b lh corner
+               Vertex { position: [1.0, 1.0 
+                    , 0.0], tex_coords: [1.0, 0.0], }, // t rh corner
+               Vertex { position: [1.0, 0.0, 0.0], 
+                    tex_coords: [1.0,1.0],},  // b rh corner
+              ];
 
-                #[cfg(debug_assertions)]
-                {
-                    println!("{:?}", glpyh_vert);
-                }
+          */
+            // create coords:
+            // linestart pos , bbox width + pos, bbox height + height
+            let glpyh_vert: &[Vertex] = &[ 
+                Vertex { position: [start.0 + x, start.1 + y + height, 0.0],
+                        tex_coords: [0.0, 0.0]}, // t lh corner
+                Vertex { position: [start.0 + x, start.1 + y
+                    , 0.0], tex_coords: [0.0, 1.0], }, // b lh corner
+                Vertex { position: [start.0 + x + width, 
+                  start.1 + y + height, 0.0], tex_coords: [1.0,0.0]}, // t rh corner
+               Vertex { position: [start.0 + x + width,
+                start.1 + y,0.0], tex_coords: [1.0, 1.0], }, // b rh corner
+              ];
 
-               // create buffer for position
-                let glpyh_buf = self.device.create_buffer_init(
-                    &wgpu::util::BufferInitDescriptor { 
-                        label: Some(&format!("buffer {}", glpyh.parent)),
-                        contents: bytemuck::cast_slice(glpyh_vert),
-                        usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                self.shell_buf.glpyhs_pos.push(glpyh_buf);
+            #[cfg(debug_assertions)]
+            {
+                println!("{:?}", glpyh_vert);
             }
-       }
+
+           // create buffer for position
+            let glpyh_buf = self.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor { 
+                    label: Some(&format!("buffer {}", glpyh.parent)),
+                    contents: bytemuck::cast_slice(glpyh_vert),
+                    usage: wgpu::BufferUsages::VERTEX,
+            });
+
+            self.shell_buf.glpyhs_pos.push(glpyh_buf);
+        }
     }
 
     // BIG OVERHEAD, creates copy of renderpipline to debug glpyh usage
@@ -1050,7 +1053,7 @@ impl<'window> ApplicationHandler for App {
                 let pty = Arc::new(Mutex::new(Pty{reader,writer}));
 
                 self.state = Some(State::new(Arc::clone(self.window.as_ref().unwrap()),
-                    TermConfig { font_dir, font_size: 18.0}, pty)); 
+                    TermConfig { font_dir, font_size: 32.0}, pty)); 
 
                 {
                     if let Some(win) = &self.window { 
